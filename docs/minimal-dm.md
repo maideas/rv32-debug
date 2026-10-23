@@ -378,6 +378,10 @@ DM logic isn't in the TCK domain, set `idle` to cover synchronization.
 
 ## Hart-side hooks the DM needs
 
+A detailed description of the CPU side — Debug Mode behavior and this
+interface's signals, handshake timing, and reset interactions — is in
+[debug-mode.md](debug-mode.md). In short:
+
 - halt request in; `running/halted` + `resumeack` status out
 - read/write port into the GPR file while halted (one r/w port suffices)
 - read/write path into CSRs while halted (reuse your CSR file port; dcsr/dpc

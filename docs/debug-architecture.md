@@ -286,7 +286,9 @@ works **while the hart is running** — this is what flash loaders use.
 
 ## 5. Hart-side debug logic
 
-This is what the *core* (not the DM) must implement:
+This is what the *core* (not the DM) must implement. A focused companion
+document with the Debug Mode behavior and the wire-level DM↔hart interface
+for the minimal DM is in [debug-mode.md](debug-mode.md):
 
 ### Debug Mode
 
