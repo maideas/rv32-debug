@@ -109,11 +109,13 @@ dmi read hartinfo   -> hartinfo = 0        # no debug ROM shadowing
 dmi read sbcs       -> sbcs = 0            # no System Bus Access
                                            # (hartinfo = 0x12, sbcs = 0x38 —
                                            #  probed but not in the minimal set)
-dmi write dmcontrol <- 0xFFFF_FFFF        # all-ones probe: every bit 1,
-                                           # in particular all 20 hartsel bits
-                                           # (the DM keeps only writable bits)
-dmi read  dmcontrol -> dmcontrol           # read back: hartsel bits read 0
-                                           # => HARTSELLEN=0 => single hart
+dmi write dmcontrol <- 0x07FF_FFC1        # feature probe: hasel (bit 26) | all
+                                           # 20 hartsel bits (25:16, 15:6) |
+                                           # dmactive — request bits stay 0
+                                           # (exactly what OpenOCD writes)
+dmi read  dmcontrol -> dmcontrol           # read back: hasel and hartsel bits
+                                           # read 0 => no hart array, HARTSELLEN=0
+                                           # => single hart
 ```
 
 From here on, `dmcontrol` writes always carry `dmactive=1` (bit 0), or
@@ -177,8 +179,8 @@ same shape; only the regno field and the write bit change:
              31:24  23   22:20  19       18       17       16    15:0
 read  xN:    0x00    0    2      0        0        1        0     0x1000+N
 write xN:    0x00    0    2      0        0        1        1     0x1000+N
-             cmdtype      aarsize  postexec transfer write   regno
-                        (2=32b)           (0=off)  (1=do)         (0x1000|N)
+             cmdtype     aarsize      postexec  transfer write regno
+                        (2=32b)        (0=off)  (1=do)        (0x1000|N)
 ```
 
 As a formula: `command = 0x0022_0000 | (0x1000 | N)` to read,

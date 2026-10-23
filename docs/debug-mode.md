@@ -286,9 +286,9 @@ state update on the `resume_req` wire**:
 
 The protocol rules around resume, all spec-mandated and all load-bearing:
 
-1. **`resumereq` is ignored while `haltreq=1`** — the hart would re-halt
-   immediately, so the DM must not even present it. The debugger clears
-   `haltreq` first.
+1. **`resumereq` is ignored while `haltreq=1`** — the DM ignores the
+   write, so no `resume_req` pulse ever reaches the hart (spec: "resumereq
+   is ignored if haltreq is set"). The debugger clears `haltreq` first.
 2. **`resumeack` exists because "not halted" is ambiguous.** The hart may
    re-halt instantly (an `ebreak` at `dpc`, a trigger, a held `halt_req`),
    so polling `allhalted` cannot prove resumption. The DM therefore keeps
@@ -454,8 +454,10 @@ poll dmstatus ◄──────── resumeack = 1 ◄───────
 The important asymmetries, in one place:
 
 - **Halt is a level, resume is an edge.** `halt_req` held means "stay
-  halted"; a stray `halt_req` during/after resume makes the hart re-halt
-  immediately (which is why `resumeack` exists).
+  halted" — the DM ignores `resume_req` entirely while it is set, so the
+  hart never leaves. A halt request asserted again right after a resume
+  (or an `ebreak` at `dpc`) re-halts the hart instantly — which is why
+  `resumeack` exists.
 - **Entry writes state (`dcsr`, `dpc`); exit reads it** (`pc ← dpc`,
   `prv ← dcsr.prv`). The hart itself never fetches anything during either
   — the quiesced-Debug-Mode property.
