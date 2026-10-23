@@ -34,31 +34,45 @@ The RISC-V debug architecture is deliberately layered so that the transport
 parts (hart debug logic) can be developed independently:
 
 ```
-        HOST (PC)                                TARGET SoC
-┌──────────────────────┐
-│ GDB / other client   │
-│      ↕ RSP, TCP      │
-│ Debug translator     │
-│ (e.g. OpenOCD)       │
-│      ↕ USB / Ethernet│
-│ Debug probe          │
-│ (J-Link, Olimex, …)  │
-└──────────┬───────────┘
-           │  TCK, TMS, TDI, TDO  (IEEE 1149.1)
-┌──────────▼─────────────────────────────────────────────────┐
-│  DTM  ── Debug Transport Module                            │
-│   └─ JTAG TAP: 16-state FSM, IR + DR scan registers       │
-│          ↕  DMI (Debug Module Interface): {op, addr, data} │
-│  DM   ── Debug Module (transport-independent)              │
-│   ├─ run control: halt/resume/reset per hart              │
-│   ├─ abstract command engine + data0…11, progbuf0…15       │
-│   └─ optional System Bus Access master (sbcs/sbaddr/sbdata)│
-│          ↕  halt request, resume request, reset lines     │
-│  Hart ── RV32 core debug logic (per core)                  │
-│   ├─ Debug Mode execution, dret                            │
-│   ├─ dcsr / dpc / dscratch0-1 CSRs                         │
-│   └─ trigger module (hw breakpoints / watchpoints)          │
-└─────────────────────────────────────────────────────────────┘
+ HOST (PC)
+┌───────────────────────────────┐
+│ GDB / other client            │
+│       ↕  RSP, TCP             │
+│ Debug translator (OpenOCD)    │
+│       ↕  USB / Ethernet       │
+│ JTAG probe (J-Link, Olimex…)  │
+└────────────┬──────────────────┘
+             │
+             │ TCK · TMS · TDI · TDO   (IEEE 1149.1)
+ TARGET SoC  │
+┌────────────┴─────────────────────────────────────────────────┐
+│ 1  JTAG TAP — 16-state FSM · IR ≥ 5 bits · DR scan registers │
+│ 2  DTM — dtmcs (IR 0x10) + dmi (IR 0x11) scan registers:     │
+│     Update-DR starts a DMI operation,                        │
+│     Capture-DR latches the result of the previous one        │
+└────────────┬─────────────────────────────────────────────────┘
+             │
+             │ 3  DMI: {op, addr, data} · 7–32-bit addresses
+             │
+┌────────────┴─────────────────────────────────────────────────┐
+│ 4  DM (Debug Module) — the reusable "debug brain"            │
+│     · run control: halt · resume · reset                     │
+│     · abstract commands: Access Register · Access Memory     │
+│       arguments & results: data0, data1 (… data11)           │
+│     · optional: Program Buffer (progbuf0…15)                 │
+│     · optional: System Bus Access ──► system bus             │
+│     · ndmreset ──► system reset (everything but DM/DTM)      │
+└────────────┬─────────────────────────────────────────────────┘
+             │
+             │ ↕  halt request · resume request · hart reset
+             │     halted / running / resumeack status
+             │
+┌────────────┴─────────────────────────────────────────────────┐
+│ 5  Hart debug logic (RV32 core)                              │
+│     · Debug Mode · dret · dcsr / dpc / dscratch CSRs         │
+│     · single step · ebreak re-routing (ebreakm/s/u)          │
+│     · trigger module: hardware breakpoints / watchpoints     │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Component | Responsibility |
