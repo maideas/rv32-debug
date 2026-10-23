@@ -56,9 +56,9 @@ halt status, halted GPR access, reset control) **plus** at least one of
 - **(c)** abstract access to **GPRs + dcsr + dpc only** — this is the
   officially named **"Minimal RISC-V Debug Specification 0.13.2"** profile.
 
-So the absolute floor is even smaller than the table above (no `data1`, no
-Access Memory, 3 abstract-accessible regnos). But this document targets
-*usable with memory access*, and the cheapest memory mechanism is the
+So the absolute floor is only slightly smaller than the table above:
+option (c) needs abstract access to just the GPRs, dcsr and dpc, but rule
+2 still demands one memory mechanism. Of the three, the cheapest is the
 **Access Memory abstract command** — no progbuf, no debug ROM, no bus
 master. That needs `data1` (address argument), giving the table above.
 
@@ -210,7 +210,7 @@ debugger tells optional features apart.
 | Value | Name | Set when |
 |---|---|---|
 | 0 | none | no error since the last clear |
-| 1 | busy | `command`/`abstractcs` written, or a data register read or written, while an abstract command was executing |
+| 1 | busy | `command`/`abstractcs`/`abstractauto` written, or a data register read or written, while an abstract command was executing |
 | 2 | not supported | the command or an option isn't implemented for this hart |
 | 3 | exception | the hart raised an exception executing the command, or the requested register doesn't exist |
 | 4 | halt/resume | hart was in the wrong state (e.g. command requires halted, hart is running) |
@@ -265,6 +265,7 @@ then write `0x0023_100A` (write=1).
 | 18:17 | 0 | 0 | — |
 | 16 | write | 0/1 | 0 = load; 1 = store |
 | 15:14 | target-specific | 0 only | — |
+| 13:0 | 0 | 0 | — |
 
 Arguments (RV32): address in `data1`, data in `data0` (arg0 = data0,
 arg1 = data1). The DM pushes the load/store through the hart's own LSU,
@@ -320,8 +321,9 @@ ignored, and `aampostincrement=1` answers `cmderr=2`.
 
 These are the usual minimal-DM bugs; each one is spec-required:
 
-1. **`cmderr` busy rules**: writing `command`/`abstractcs`, or *reading or
-   writing* `data0`/`data1` while `busy=1` must set `cmderr=1` (busy) *if
+1. **`cmderr` busy rules**: writing `command`/`abstractcs` (and
+   `abstractauto`, if implemented), or *reading or writing*
+   `data0`/`data1` while `busy=1` must set `cmderr=1` (busy) *if
    cmderr==0*. Reads of `abstractcs` must not. This is what makes batched
    debugger scans safe.
 2. **`cmderr` gates execution**: while non-zero, writes to `command` are
@@ -346,6 +348,8 @@ These are the usual minimal-DM bugs; each one is spec-required:
 ```
 halt:    dmcontrol <= dmactive=1 | haltreq=1        (= 0x8000_0001)
          poll dmstatus.allhalted==1                   (dmstatus = 0x382 when halted)
+         dmcontrol <= dmactive=1                      (= 0x0000_0001: clear haltreq,
+                                                       required before abstract commands)
 
 read x10: command <= {cmdtype=0, aarsize=2, transfer=1, write=0, regno=0x100a}
                                                (= 0x0022_100A)
@@ -407,7 +411,7 @@ Verified against `riscv-013.c` / `riscv-013_reg.c` (riscv-openocd,
   progbufsize=0 only produces a warning about `fence` — then halts, reads
   dcsr/dpc/misa via abstract commands, resumes if it was running.
 - Memory method order is progbuf → sysbus → abstract; with the first two
-  absent it uses **Access Memory automatically** (`riscv set_memaccess
+  absent it uses **Access Memory automatically** (`riscv set_mem_access
   abstract` pins it).
 - Optional CSRs are probed by abstract read; not-supported cleanly marks
   them non-existent.
@@ -423,8 +427,9 @@ Verified against `riscv-013.c` / `riscv-013_reg.c` (riscv-openocd,
 4. `resethaltreq` — "reset and halt" (needs core reset-entry support).
 5. SBA (sbcs/sbaddress0/sbdata0) — memory access while running, flash
    loaders; costs a bus master.
-6. `abstractauto` + `aarpostincrement`/`aampostincrement` — burst
-   performance: 1 DMI op per word instead of 4 (see
+6. `abstractauto` + `aampostincrement` — burst performance: 1 DMI op
+   per memory word instead of 4 (`aarpostincrement` would add the same
+   for register bursts; see
    [Optional burst extension](#optional-burst-extension) above and the
    burst sequences in [debug-sequences.md](debug-sequences.md)).
 7. Program Buffer — usually *more* work (debug ROM, impebreak, hartinfo

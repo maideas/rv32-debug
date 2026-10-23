@@ -173,7 +173,10 @@ multi-hart operations.
 
 A DM can control up to 2^20 harts.
 
-### DM register map (identical in 0.13.2 and 1.0)
+### DM register map (0.13.2; all addresses unchanged in 1.0)
+
+1.0 keeps every address below and only adds `custom` (0x1f), `dmcs2`
+(0x32, halt/resume groups) and `custom0`–`custom15` (0x70–0x7f).
 
 | DMI addr | Register | Function |
 |---|---|---|
@@ -259,11 +262,12 @@ one-DMI-op-per-word burst transfers.
 
 ### Program Buffer — executing arbitrary code on the halted hart
 
-`progbuf0–15` hold up to 16 words of instructions (compressed, i.e. 16-bit
-`c.*` encodings). When an abstract command sets `postexec` (or the debugger
+`progbuf0–15` hold up to 16 32-bit words of instructions (normal 32-bit
+or compressed 16-bit encodings, mixed freely). When an abstract command sets `postexec` (or the debugger
 uses Quick Access), the halted hart executes this code **in Debug Mode at
 M-mode privilege**: all interrupts masked, exceptions end the program without
-touching CSRs, `wfi` is a nop, branches/`mret` are illegal. This is the
+touching CSRs, `wfi` is a nop, `mret`/`ecall` are undefined, and control
+transfers may act as illegal instructions. This is the
 universal fallback for doing anything not covered by abstract commands —
 classically memory access:
 
@@ -288,20 +292,23 @@ works **while the hart is running** — this is what flash loaders use.
 
 This is what the *core* (not the DM) must implement. A focused companion
 document with the Debug Mode behavior and the wire-level DM↔hart interface
-for the minimal DM is in [debug-mode.md](debug-mode.md):
+for the minimal DM is in [debug-mode.md](debug-mode.md).
 
 ### Debug Mode
 
 A special execution state entered on: halt request, trigger with
 action=debug, `ebreak` (if enabled for the current privilege), single-step
-completion, or resethaltreq out of reset. While halted, the PC fetches from
-the debug ROM (a small ROM, often inside/near the DM — this is what the
-Program Buffer and the save/restore sequences are fetched through).
+completion, or resethaltreq out of reset. The spec leaves the
+implementation open; in the common ROM-based design the halted hart
+fetches from a debug ROM (a small ROM, often inside/near the DM — this is
+what the Program Buffer and the save/restore sequences are fetched
+through). The minimal DM of [debug-mode.md](debug-mode.md) needs no ROM
+at all.
 
 While executing Program Buffer code in Debug Mode, the hart runs at M-mode
 privilege, interrupts are masked, exceptions end execution without updating
-any CSRs, `wfi` is a nop, and most privilege-changing instructions act as
-illegal instructions.
+any CSRs, `wfi` is a nop, and privilege-changing instructions other than
+`ebreak` (`ecall`, `mret`, …) have undefined behavior.
 
 ### Debug CSRs
 
@@ -349,13 +356,15 @@ breakpoint without touching memory.
    `abits`, `idle`.
 2. **Bring up DM**: write `dmcontrol.dmactive=1` (0=fully resets the DM),
    verify.
-3. **Halt**: set `hartsel`, write `haltreq=1`, poll `dmstatus.allhalted`.
+3. **Halt**: set `hartsel`, write `haltreq=1`, poll `dmstatus.allhalted`,
+   then clear `haltreq` (it must be 0 before abstract commands).
    (Optionally first: check `authenticated` — some DMs gate everything behind
    authdata.)
 4. **Read state**: Access Register commands for dpc, dcsr (`cause` tells you
    *why* it halted), GPRs; more CSRs/FPRs as supported.
-5. **Memory**: System Bus Access if present; else Program Buffer
-   (`c.lw`/`c.sw` snippets); else Access Memory command.
+5. **Memory**: whichever of Program Buffer (`lw`/`sw` snippets), System
+   Bus Access, or the Access Memory command exists — OpenOCD's default
+   preference is progbuf → SBA → Access Memory.
 6. **Breakpoints**: software `ebreak` patching (if the code region is
    writable) or triggers via `tselect`/`tdata1`/`tdata2`.
 7. **Single-step**: `dcsr.step=1` → resume → hart re-halts with cause=4.
@@ -371,8 +380,9 @@ breakpoint without touching memory.
 - `aarsize=2` (32-bit) everywhere; register access needs only `data0`
   (`datacount ≥ 1`), while Access Memory additionally uses `data1` as
   the address; SBA needs only `sbdata0`/`sbaddress0`.
-- Program Buffer instructions must be 16-bit (c.* encodings) — an RV32 hart
-  in Debug Mode runs in DXLEN=32.
+- An RV32 hart in Debug Mode runs with DXLEN=32. Program Buffer
+  instructions may be 32-bit or compressed; only a one-word buffer
+  (`progbufsize=1`) restricts the program to a single instruction.
 - On Sv32 systems physical addresses can be 34 bits — `mprven` in dcsr
   decides whether MPRV translation applies to debug-mode accesses, which
   matters for reading physical memory from the debug ROM.
@@ -382,12 +392,13 @@ breakpoint without touching memory.
 ## 8. Versions in the field: 0.13.2 vs 1.0
 
 - **0.13.2 (2019)** is what virtually all deployed silicon and RTL
-  implements today — SiFive cores, OpenTitan's `rv_dm`, PULP's `riscv-dm`
+  implements today — SiFive cores, OpenTitan's `rv_dm`, PULP's `riscv-dbg`
   (used by Ibex/CVA6 and many others). OpenOCD's `riscv` target driver
   speaks it (`dtmcs.version=1`, `dmstatus.version=2`).
-- **1.0 (ratified 2024)** kept the DMI protocol, JTAG IR map, and every
+- **1.0 (ratified February 2025)** kept the DMI protocol, JTAG IR map, and every
   register address above; `dmstatus.version=3`, `dtmcs.version` stays 1
-  (plus a new `errinfo` field), the content was restructured into named
+  (plus a new `errinfo` field; `dmihardreset` is renamed `dtmhardreset`),
+  `dcsr.cause` gains values 6 (halt group) and 7 (other), the content was restructured into named
   extensions (Sdext for the external-debug parts, Sdtrig for triggers), with
   richer triggers and clarifications. A 1.0 debugger is nearly a drop-in
   over 0.13 hardware for the core flow.

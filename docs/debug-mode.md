@@ -103,7 +103,8 @@ Transitions, in terms of the signals of
 
 ### Entry causes
 
-A hart enters Debug Mode for exactly one of five spec-defined reasons,
+A hart enters Debug Mode for exactly one of five spec-defined reasons
+(0.13.2; 1.0 adds 6 = halt group and 7 = other, neither relevant here),
 recorded in `dcsr.cause` so the debugger knows *why* it halted:
 
 | `dcsr.cause` | Meaning | Exists in the minimal DM? |
@@ -225,8 +226,9 @@ The rest is a debugger protocol, walked through in
 2. Resume. When execution reaches the slot, the hart halts with
    `cause=1` and `dpc` pointing at the patched instruction — the debugger
    reads `dpc` (abstract CSR read) to learn where it stopped.
-3. To continue, the debugger patches the original instruction back and
-   writes `dpc` past it (`dpc + 2/4`), or restores and re-executes it.
+3. To continue, the debugger patches the original instruction back,
+   single-steps it (with `dpc` still pointing at it), re-inserts the
+   `ebreak`, and resumes.
 4. To remove the breakpoint, restore the original instruction.
 
 Two caveats in the minimal configuration: this is the **only** breakpoint
@@ -348,28 +350,27 @@ data-access ports, and the reset wire:
 ```
 ┌─────────────────────────────────┐              ┌────────────────────────────────┐
 │         Debug Module            │              │            RV32 hart           │
-│   (minimal register set:         │              │                                │
+│   (minimal register set:        │              │                                │
 │    data0/1, dmcontrol,          │              │   run-control FSM              │
-│    dmstatus, abstractcs,        │              │   running ⇄ halted            │
+│    dmstatus, abstractcs,        │              │   running ⇄ halted             │
 │    command)                     │              │                                │
 │                                 │              │                                │
-│ dmcontrol.haltreq ──flop──► halt_req ─────────►│  halt request (level)         │
+│ dmcontrol.haltreq ──flop──► halt_req ─────────►│  halt request (level)          │
 │ dmcontrol.resumereq ──W1──► resume_req ───────►│  resume request (pulse)        │
 │ dmcontrol.ndmreset ──flop──► ndmreset ────────►│  system reset (not DM/DTM)     │
 │                                 │              │                                │
 │ abstract-command FSM            │              │                                │
-│  ├─ Access Register ──► dbg_gpr_* ────────────►│  extra GPR-file r/w port      │
-│  │       (regno 0x1000–         │              │                                │
-│  │        0x101f)               │              │                                │
+│  ├─ Access Register ──► dbg_gpr_* ────────────►│  extra GPR-file r/w port       │
+│  │       (regno 0x1000–0x101f)  │              │                                │
 │  ├─ Access Register ──► dbg_csr_* ────────────►│  CSR-file read/write path      │
-│  │       (regno 0x000–0xfff)     │              │  (incl. dcsr/dpc)             │
-│  └─ Access Memory ────► dbg_mem_* ─────────────►│  LSU / bus interface           │
-│                                 │              │  (addr from data1, data data0)│
+│  │       (regno 0x000–0xfff)    │              │  (incl. dcsr/dpc)              │
+│  └─ Access Memory ────► dbg_mem_* ────────────►│  LSU / bus interface           │
+│                                 │              │  (addr = data1, data = data0)  │
 │                                 │              │                                │
 │ dmstatus bits 9:8   ◄─── halted ◄──────────────┤  status outputs                │
-│ dmstatus bits 11:10 ◄── running ◄─────────────┤  (= !halted)                   │
-│ dmstatus bits 17:16 ◄── resumeack ◄───────────┤  set on leaving halted,        │
-│                                 │              │  cleared by resumereq write   │
+│ dmstatus bits 11:10 ◄── running ◄──────────────┤  (= !halted)                   │
+│ dmstatus bits 17:16 ◄── resumeack ◄────────────┤  set on leaving halted,        │
+│                                 │              │  cleared by resumereq write    │
 └─────────────────────────────────┘              └────────────────────────────────┘
 ```
 
@@ -442,8 +443,8 @@ haltreq=1   ─────────► halt_req = 1 ────────
                             │                       dpc/dcsr.cause/prv ← …
 poll dmstatus ◄────────  halted = 1 ◄────────────── declare halted
 (allhalted=1)
-… abstract commands (hart stays halted, haltreq may stay 1)…
-haltreq=0   ─────────► halt_req = 0
+haltreq=0   ─────────► halt_req = 0           (hart stays halted)
+… abstract commands (spec: haltreq must be 0 before each one) …
 resumereq=1 ─────────► resume_req pulse ──────────► pc ← dpc, prv ← dcsr.prv
    (also clears                                    leave halted, step? arm step
     resumeack)
@@ -470,7 +471,7 @@ Three distinct resets touch this interface — keep them apart:
 
 | Reset | What it resets | Effect on debug state |
 |---|---|---|
-| TAP reset (TRST or 5×TMS=1) | the DTM only | DM and hart keep all state; DMI sticky errors clear via `dtmcs.dmireset`/`dmihardreset` (see [jtag-dtm.md](jtag-dtm.md)) |
+| TAP reset (TRST* or 5×TMS=1) | the TAP/DTM only | DM and hart keep all state; the IR returns to IDCODE, and the PULP/OpenTitan DTM also clears its DMI state like `dmihardreset` (see [jtag-dtm.md](jtag-dtm.md#reset-and-recovery)) |
 | `dmactive=0` | the DM only (soft reset of all DM flops) | `halt_req`/`resume_req`/`ndmreset` drop — a held halt request silently clears (the debugger re-issues it; this lever is the debugger's "unwedge the DM" tool) |
 | `ndmreset=1` | everything except DM/DTM — the whole SoC incl. the hart and its debug CSRs | a halted hart is reset and comes up **running** (unless `halt_req` is held across the pulse: it halts right out of reset — the minimal-DM substitute for `resethaltreq`; the flows are in [debug-sequences.md](debug-sequences.md) "Reset and debug from reset") |
 
@@ -514,11 +515,11 @@ traced through every hop — transport, DM, interface, hart:
 | 2 | `dmactive`/`haltreq` flops set; `halt_req` asserts | DM |
 | 3 | Hart finishes the in-flight instruction, writes `dpc`/`dcsr.prv`/`dcsr.cause=3`, parks | hart run-control FSM |
 | 4 | `halted` rises; `dmstatus` now reads `0x0000_0382` (allhalted \| anyhalted \| authenticated \| version=2) | DM ↔ hart status |
-| 5 | Debugger polls `dmstatus` until allhalted, then scans `command ← 0x0022_100A` (Access Register, read, regno 0x100a) | DMI → DM |
+| 5 | Debugger polls `dmstatus` until allhalted, clears the request (`dmcontrol ← 0x0000_0001`, `halt_req` drops, hart stays halted), then scans `command ← 0x0022_100A` (Access Register, read, regno 0x100a) | DMI → DM |
 | 6 | DM's abstract FSM drives `dbg_gpr_*` (addr=10), `abstractcs.busy` rises | DM ↔ hart GPR port |
 | 7 | GPR file answers; result → `data0`; `busy` falls | DM |
 | 8 | Debugger reads `data0` over DMI | DMI |
-| 9 | Debugger scans `dmcontrol ← 0x0000_0001` then `0x4000_0001`: `halt_req` drops, `resume_req` pulses | DM |
+| 9 | Debugger scans `dmcontrol ← 0x4000_0001`: `resume_req` pulses | DM |
 | 10 | Hart: `pc ← dpc`, `prv ← dcsr.prv`, leaves halted; `resumeack` sets | hart run-control FSM |
 | 11 | Debugger polls `dmstatus.allresumeack` — done | DM ↔ hart status |
 

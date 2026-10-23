@@ -43,14 +43,14 @@ The DTM sits between the four JTAG pads and the Debug Module. It contains:
 ```
 TCK ─┐
 TMS ─┤     ┌──────────────────────────────────────────────────┐
-TDI ─┼────►│ JTAG TAP                                        │
-     │    │  16-state FSM ──► IR (5 bits) ──► DR select      │
-TDO ◄┼─────│        │                                        │
-     │     │   capture/shift/update pulses                   │
-     │     │   ┌────────┬──────────┬──────────┬─────────┐    │
-     │     │   │ BYPASS │ IDCODE   │ dtmcs    │ dmi     │    │   DMI bus
-     │     │   │ 1 bit  │ 32 bits  │ 32 bits  │ abits+34│    │   (req/resp
-     │     │   └────────┴──────────┴──────────┴─────────┘    │    handshake)
+TDI ─┼────►│ JTAG TAP                                         │
+     │     │  16-state FSM ──► IR (5 bits) ──► DR select      │
+TDO ◄┼─────│        │                                         │
+     │     │   capture/shift/update pulses                    │
+     │     │   ┌────────┬──────────┬──────────┬──────────┐    │
+     │     │   │ BYPASS │ IDCODE   │ dtmcs    │ dmi      │    │   DMI bus
+     │     │   │ 1 bit  │ 32 bits  │ 32 bits  │ abits+34 │    │   (req/resp
+     │     │   └────────┴──────────┴──────────┴──────────┘    │    handshake)
      └─────└──────────────────────────────────────────────────┘
 ```
 
@@ -93,7 +93,7 @@ consecutive TCKs with TMS=1 from any state reach Test-Logic-Reset, TLR
 | Capture-DR | Shift-DR | Exit1-DR | load selected DR's parallel value |
 | Shift-DR | Shift-DR | Exit1-DR | shift DR one bit: TDO ← LSB, MSB ← TDI |
 | Exit1-DR | Pause-DR | Update-DR | — |
-| Pause-DR | Pause-DR | Exit2-DR | (retry aborted bits) |
+| Pause-DR | Pause-DR | Exit2-DR | (shifting paused) |
 | Exit2-DR | Shift-DR | Update-DR | — |
 | Update-DR | Run-Test/Idle | Select-DR-Scan | apply the shifted DR value |
 | Select-IR-Scan | Capture-IR | Test-Logic-Reset | — |
@@ -175,7 +175,7 @@ except `errinfo`):
 |---|---|---|---|
 | 31:21 | 0 | R | — |
 | 20:18 | errinfo | R | **1.0 only, optional.** extra error detail (below). 0.13.2: read 0. |
-| 17 | dmihardreset | W1 | full reset of the DTM: forget outstanding DMI ops, reset all DTM state |
+| 17 | dmihardreset | W1 | full reset of the DTM: forget outstanding DMI ops, reset all DTM state (renamed `dtmhardreset` in 1.0, same function) |
 | 16 | dmireset | W1 | clear the sticky error state (`op`/`dmistat`) only; does **not** abort in-flight ops |
 | 15 | 0 | — | — |
 | 14:12 | idle | R | RTI dwell hint (see [Timing](#timing-the-busy-mechanism-and-dtmcsidle)) |

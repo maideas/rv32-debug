@@ -23,9 +23,10 @@ can be used directly as test vectors against RTL or a driver.
 - [Halting the hart](#halting-the-hart)
 - [Reading the halt reason and core state](#reading-the-halt-reason-and-core-state)
 - [Accessing CPU registers (GPRs)](#accessing-cpu-registers-gprs)
-- [Accessing CSRs](#accessing-csrs)
+  - [Accessing CSRs](#accessing-csrs)
 - [Memory access](#memory-access)
-- [Sequential memory read/write (block transfers)](#sequential-memory-readwrite-block-transfers)
+  - [Sequential memory read/write (block transfers)](#sequential-memory-readwrite-block-transfers)
+  - [Auto-increment bursts (optional DM extension)](#auto-increment-bursts-optional-dm-extension)
 - [Resuming](#resuming)
 - [Single stepping](#single-stepping)
 - [Software breakpoints](#software-breakpoints)
@@ -45,7 +46,7 @@ poll <addr> until <cond>        repeat the read until the condition holds
 ```
 
 - Every `dmi read/write` is one DMI operation = two JTAG `dmi` scans
-  (request + result), roughly 90 TCK cycles plus the Run-Test/Idle dwell
+  (request + result), roughly 95 TCK cycles plus the Run-Test/Idle dwell
   reported in `dtmcs.idle` — see [jtag-dtm.md](jtag-dtm.md). Real
   debuggers batch many scans per JTAG transaction.
 - Reads of `dmstatus` and `abstractcs` are side-effect-free — safe to
@@ -165,9 +166,12 @@ Mode:
 | 4 | single step completed | yes |
 | 5 | resethaltreq out of reset | no (not implemented) |
 
-Save `dcsr` and `dpc` when you attach — you need the originals to
-restore on detach. Also save any GPRs/CSRs you modify; with Access
-Register, `dscratch` is not needed (that is a Program Buffer thing).
+Save `dcsr` when you attach — its control bits (`ebreakm/s/u`, `step`)
+are what you restore on detach. Do **not** restore `dpc` on detach: it
+is where the program resumes. Re-read `dcsr` after every halt (its
+`cause` and `prv` change) and modify that current value, not the attach
+copy. With Access Register, `dscratch` is not needed (that is a Program
+Buffer thing).
 
 ## Accessing CPU registers (GPRs)
 
@@ -176,11 +180,11 @@ the regno is just `0x1000 | N` for xN. The command word is always the
 same shape; only the regno field and the write bit change:
 
 ```
-             31:24  23   22:20  19       18       17       16    15:0
-read  xN:    0x00    0    2      0        0        1        0     0x1000+N
-write xN:    0x00    0    2      0        0        1        1     0x1000+N
-             cmdtype     aarsize      postexec  transfer write regno
-                        (2=32b)        (0=off)  (1=do)        (0x1000|N)
+bits:        31:24    23  22:20    19       18        17        16     15:0
+field:       cmdtype  0   aarsize  aarpost  postexec  transfer  write  regno
+read  xN:    0x00     0   2        0        0         1         0      0x1000+N
+write xN:    0x00     0   2        0        0         1         1      0x1000+N
+                          (2=32b)  (0=off)  (0=off)   (1=do)           (0x1000|N)
 ```
 
 As a formula: `command = 0x0022_0000 | (0x1000 | N)` to read,
@@ -322,12 +326,12 @@ Command words for all sizes (`write` is bit 16):
 (64/128-bit variants exist in the encoding but must be rejected with
 `cmderr=2` on RV32.)
 
-**Cost.** One word = 4 DMI ops (2 writes + command + poll + data0 read
-rounds to 4), so `count` words ≈ `4·count` DMI ops ≈ `40·count` µs at
+**Cost.** One word = 4 DMI ops (read: `data1` + `command` + poll +
+`data0`; write: `data0` + `data1` + `command` + poll), so `count` words ≈ `4·count` DMI ops ≈ `40·count` µs at
 10 MHz TCK before batching. A 1 KiB read (256 words) is ~1024 DMI ops.
 Compare the alternatives (see "What to add next" in
 [minimal-dm.md](minimal-dm.md)): SBA with `sbautoincrement` turns the
-same block into `count` writes of `sbdata0` plus one `sbaddress0` write,
+same block into `count` accesses of `sbdata0` plus one `sbaddress0` write,
 and `aampostincrement`/`abstractauto` remove the per-word `data1`
 rewrites — the loop structure stays, the constants get better. This is
 why block transfers, not stepping, dominate optimization efforts.
@@ -447,9 +451,10 @@ and `allhalted` would mislead you into thinking it never resumed.
 ## Single stepping
 
 ```
-dmi write data0 <- (saved_dcsr | 0x4)     # 0x4 = dcsr.step (bit 2); OR it
-                                           # into the saved dcsr to keep
-                                           # cause/prv/ebreak bits intact
+dmi write data0 <- (dcsr | 0x4)           # 0x4 = dcsr.step (bit 2); OR it
+                                           # into the current dcsr (read
+                                           # after this halt) to keep
+                                           # prv/ebreak bits intact
 dmi write command <- 0x0023_07B0         # Access Register, write dcsr
                                            # (regno 0x7B0)
 poll abstractcs until busy==0 && cmderr==0
@@ -460,8 +465,8 @@ poll dmstatus until allhalted                 # ...and re-halted after ONE instr
                                           # dcsr.cause = 4, dpc advanced
 ```
 
-Then clear `step` (write `dcsr` = saved value) before the next plain
-resume, or the hart will single-step forever. With `stepie=0`
+Then clear `step` (write `dcsr & ~0x4`) before the next plain resume,
+or the hart will single-step forever. With `stepie=0`
 (reset default) interrupts are masked during the step — deterministic
 stepping; the pending interrupt is serviced after the next resume.
 
@@ -477,7 +482,10 @@ replace the instruction word at address A with `ebreak`
 (`0x9002`). The debugger keeps a table `A -> (original word, length)`.
 
 First check whether compressed instructions exist:
-`(misa >> 2) & 1` (misa regno 0x301).
+`(misa >> 2) & 1` (misa regno 0x301). With C, instructions are only
+2-byte aligned: for an `A` with `A % 4 == 2`, read the original with a
+16-bit access (`0x0210_0000`) first, then read the second halfword at
+`A+2` only if `(w0 & 0x3) == 0x3`.
 
 ### Installing (always while halted)
 
@@ -497,8 +505,8 @@ if (w0 & 0x3) == 0x3:                 # 32-bit instruction
     dmi write command <- 0x0221_0000    # 32-bit write
     poll abstractcs ...                     # length = 4
 else:                                 # 16-bit compressed instruction
-    dmi write data0 <- 0x9002         # c.ebreak = compressed quadrant-1
-                                      # instruction (op=0x4, fun=0x2) —
+    dmi write data0 <- 0x9002         # c.ebreak = quadrant 2 (op=0b10),
+                                      # funct4=0b1001, rs1=rs2=0 —
                                       # the 16-bit form of ebreak
     dmi write data1 <- A
     dmi write command <- 0x0211_0000    # 16-bit write (aamsize=1!)
@@ -508,10 +516,12 @@ else:                                 # 16-bit compressed instruction
 The 16-bit store is required: a 32-bit store would clobber the
 *following* instruction. If the DM only implements 32-bit stores, use
 the read-modify-write trick instead: write the full word
-`(w0 & 0xFFFF_0000) | 0x9002`.
+`(w0 & 0xFFFF_0000) | 0x9002` (only for word-aligned `A`; for
+`A % 4 == 2` patch the upper halfword of the word at `A-2`). The
+minimal DM requires `aamsize=1`, so this is a fallback for other DMs.
 
 Also set `dcsr.ebreakm` (bit 15, `0x8000`) at attach if the debuggee runs
-in M-mode (`dcsr = saved_dcsr | 0x8000`), and `ebreaku`/`ebreaks` per
+in M-mode (`dcsr = dcsr | 0x8000`), and `ebreaku`/`ebreaks` per
 privilege — otherwise the patched `ebreak` traps to the *debuggee's*
 trap handler instead of Debug Mode.
 
@@ -538,7 +548,7 @@ The classic step-over-restore-reinsert loop:
    -> executed the original instruction, dpc = A+len (or branch target)
 3. re-insert the patch:
    write A <- ebreak / c.ebreak
-4. clear step: write dcsr = saved_dcsr
+4. clear step: write dcsr = dcsr & ~0x4    # keeps ebreakm set
 5. resumereq, poll allresumeack       # run on
 ```
 
@@ -554,8 +564,7 @@ works just as well — halt out of reset and debug from the very first
 instruction:
 
 ```
-dmi write dmcontrol <- 0x8000_0003        # 0x8000_0002 would be ndmreset
-                                            # alone; here: haltreq (0x8000_0000)
+dmi write dmcontrol <- 0x8000_0003        # haltreq (0x8000_0000)
                                             # | ndmreset (0x2) | dmactive (0x1)
                                             # -> everything except DM/DTM in reset
 ... hold as long as needed ...
@@ -580,8 +589,8 @@ Leave the target running as if no debugger had ever been there:
 
 ```
 1. remove all breakpoints (restore every patched word)
-2. restore dcsr (from the value saved at attach: clears ebreakm,
-   step, etc.)
+2. restore the dcsr control bits saved at attach (clears ebreakm,
+   step, etc.; keep the current prv)
 3. dmi write dmcontrol <- 0x0000_0001      # clear haltreq, dmactive stays 1
 4. resumereq; poll allresumeack       # run
    (skip if the hart was already running when you attached)
@@ -619,8 +628,9 @@ with `dmireset` (bit 16) = 1, increase the Run-Test/Idle dwell, repeat
 the request scan (spec B.1 — OpenOCD does exactly this, ratcheting the
 delay up on each busy).
 
-**3. DMI failed (`op=2`).** The DMI itself errored. `dtmcs.dmihardreset`
-(bit 17), re-init `dmactive`, replay.
+**3. DMI failed (`op=2`).** The DMI itself errored. Clear the sticky
+status with `dtmcs.dmireset` (bit 16); if the DTM stays stuck,
+`dtmcs.dmihardreset` (bit 17). Then re-init `dmactive` and replay.
 
 **4. Hart never halts.** Read `dmstatus`: `allunavail` → it is in reset:
 do the [Reset and debug from reset](#reset-and-debug-from-reset) flow.
@@ -656,7 +666,7 @@ Know the limits so you don't hunt for bugs that are design facts:
 
 ## Cost cheat sheet
 
-Order-of-magnitude costs (abits=7, one DMI op = 2 dmi scans of ~45
+Order-of-magnitude costs (abits=7, one DMI op = 2 dmi scans of ~47
 TCKs each, plus idle dwell; at 10 MHz TCK ≈ 10 µs per DMI op before
 batching):
 
@@ -667,8 +677,8 @@ batching):
 | write a GPR/CSR | 3 | data0 + command + poll |
 | read/write a memory word | 4 | data1 + command + poll + data0 |
 | halt / resume | 1 + poll | ~2–5 ops until acknowledged |
-| breakpoint install | ~6 | read word + patch write |
-| continue past breakpoint | ~12 | restore + step + re-patch + resume |
+| breakpoint install | ~8 | read word + patch write (4 + 4) |
+| continue past breakpoint | ~19 | restore (4) + set step (3) + step (3) + re-patch (4) + clear step (3) + resume (2) |
 | register dump (33 regs) | ~99 | mostly polling |
 
 Debuggers batch aggressively (OpenOCD pipelines whole command
