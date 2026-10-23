@@ -171,7 +171,7 @@ DMI, so `dtmcs` works even when the DM is hung or in reset. This is what
 makes error recovery always possible. Layout (identical in 0.13.2 and 1.0
 except `errinfo`):
 
-| Bits | Field | R/W | Meaning |
+| Bits | Field | Access | Meaning |
 |---|---|---|---|
 | 31:21 | 0 | R | — |
 | 20:18 | errinfo | R | **1.0 only, optional.** extra error detail (below). 0.13.2: read 0. |
@@ -182,6 +182,9 @@ except `errinfo`):
 | 11:10 | dmistat | R | alias of the sticky status: 0 = OK, 2 = failed, 3 = busy |
 | 9:4 | abits | R | width of the address field in the `dmi` register (7–32; **minimum 7**) |
 | 3:0 | version | R | 1 = spec 0.13/1.0 (0 = 0.11; 15 = custom) |
+
+Access codes: **R** read-only, **R/W** readable and writable, **W1**
+write-1-to-trigger (self-clears).
 
 Capture-DR loads the status value (with `dmireset`/`dmihardreset` reading
 0); Update-DR acts on the write bits; all other bits ignore writes.

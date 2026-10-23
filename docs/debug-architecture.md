@@ -6,7 +6,8 @@ Module (DTM), the Debug Module Interface (DMI), the Debug Module (DM), and the
 hart-side debug logic (Debug Mode, debug CSRs, trigger module).
 
 A practical guide to the *smallest* register set worth implementing in a Debug
-Module is in [minimal-dm.md](minimal-dm.md).
+Module is in [minimal-dm.md](minimal-dm.md); the usual debugger workflows
+over it are in [debug-sequences.md](debug-sequences.md).
 
 References used: the RISC-V External Debug Support specification,
 [version 0.13.2](https://github.com/riscv/riscv-debug-spec/raw/release/riscv-debug-release.pdf)
@@ -106,8 +107,8 @@ timing, and DMI/CDC — is in [jtag-dtm.md](jtag-dtm.md).
 | `abits [9:4]` | Width of the DMI address field |
 | `idle [14:12]` | Hint: TCK cycles to spend in Run-Test/Idle between DMI ops to avoid "busy" |
 | `dmistat [11:10]` | 0 = OK, 2 = op failed, 3 = busy (both sticky) |
-| `dmireset` (bit 16) | W1: clears sticky error state |
-| `dmihardreset` (bit 17) | W1: hard reset of the DTM, aborts outstanding DMI ops |
+| `dmireset` (bit 16) | Write 1: clears sticky error state (self-clears) |
+| `dmihardreset` (bit 17) | Write 1: hard reset of the DTM, aborts outstanding DMI ops (self-clears) |
 
 (The ratified 1.0 spec adds an optional `errinfo [20:18]` field with more
 detail on DMI errors.)
@@ -237,7 +238,10 @@ not-supported / exception / halt-resume / bus / other, write-1-to-clear).
 The other commands: **Quick Access** (halt → run progbuf → resume,
 optional) and **Access Memory** (load/store with the hart's own view &
 permissions, optional). Argument usage per width (32-bit): arg0 = `data0`,
-arg1 = `data1`.
+arg1 = `data1`. Access Memory optionally supports `aampostincrement`
+(command bit 19): increment `data1` by the access size after each
+successful access — combined with `abstractauto` (0x18) this gives
+one-DMI-op-per-word burst transfers.
 
 ### Program Buffer — executing arbitrary code on the halted hart
 
@@ -289,7 +293,7 @@ Accessible only from Debug Mode, or via abstract commands:
 
 | CSR | Name | Highlights |
 |---|---|---|
-| 0x7b0 | dcsr | `xdebugver`, `ebreakm/ebreaks/ebreaku` (does `ebreak` halt or trap per privilege), `step`, `cause` (1=ebreak, 2=trigger, 3=haltreq, 4=step, 5=resethaltreq), `prv` (privilege to resume into), `stopcount`, `stoptime`, `stepie`, `mprven`, `nmip` |
+| 0x7b0 | dcsr | `xdebugver[31:28]`, `ebreakm[15]` / `ebreaks[13]` / `ebreaku[12]` (does `ebreak` halt or trap per privilege), `stepie[11]`, `stopcount[10]`, `stoptime[9]`, `cause[8:6]` (1=ebreak, 2=trigger, 3=haltreq, 4=step, 5=resethaltreq), `mprven[4]`, `nmip[3]`, `step[2]`, `prv[1:0]` (privilege to resume into) |
 | 0x7b1 | dpc | Address to resume at (address of the ebreak for ebreak-halts, "next instruction" otherwise) |
 | 0x7b2/0x7b3 | dscratch0/1 | Scratch registers used by the debug ROM (e.g. `hartinfo.nscratch`) |
 
@@ -342,8 +346,9 @@ breakpoint without touching memory.
 8. **Resume**: `resumereq=1`, poll `allresumeack`.
 9. **Reset & debug from reset**: `ndmreset` for whole-SoC reset, or
    `hartreset` for one hart, or `resethaltreq` to come out of reset halted.
-10. **Error recovery**: `abstractcs.cmderr` is sticky W1C; DMI-level errors
-    clear via `dtmcs.dmireset`; a wedged DTM gets `dmihardreset`.
+10. **Error recovery**: `abstractcs.cmderr` is sticky (cleared by writing 1
+    to the set bits); DMI-level errors clear via `dtmcs.dmireset`; a wedged
+    DTM gets `dmihardreset`.
 
 ## 7. RV32-specific notes
 
