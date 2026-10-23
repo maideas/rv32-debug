@@ -4,11 +4,12 @@ This document explains in full detail how the JTAG-to-DMI translation works
 and what you need to implement it: the JTAG TAP (IEEE 1149.1), the DTM
 registers (`dtmcs`, `dmi`), the `op` request/response protocol with its
 sticky error rules, the timing model (`dtmcs.idle`, busy), reset/recovery
-semantics, the DMI bus interface including clock-domain crossing, a complete
-RTL skeleton, and debugger-level scan sequences.
+semantics, the DMI bus interface including clock-domain crossing, and
+debugger-level scan sequences.
 
-For the surrounding architecture see [debug-architecture.md](debug-architecture.md);
-for the Debug Module on the far side of the DMI see [minimal-dm.md](minimal-dm.md).
+For the surrounding architecture see
+[debug-architecture.md](debug-architecture.md); for the Debug Module on
+the far side of the DMI see [minimal-dm.md](minimal-dm.md).
 
 Everything below was verified against the RISC-V External Debug Support
 specification [version 0.13.2](https://github.com/riscv/riscv-debug-spec/raw/release/riscv-debug-release.pdf)
@@ -31,7 +32,6 @@ driver.
 - [Timing: the busy mechanism and dtmcs.idle](#timing-the-busy-mechanism-and-dtmcsidle)
 - [Reset and recovery](#reset-and-recovery)
 - [The DMI bus interface](#the-dmi-bus-interface)
-- [Reference RTL skeleton](#reference-rtl-skeleton)
 - [Worked scan sequences](#worked-scan-sequences)
 - [Verification checklist](#verification-checklist)
 - [Common pitfalls](#common-pitfalls)
@@ -82,8 +82,8 @@ transport.
 ### The TAP state machine
 
 16 states; every rising TCK edge advances according to TMS. Five
-consecutive TCKs with TMS=1 from any state reach Test-Logic-Reset (so does
-TRST*).
+consecutive TCKs with TMS=1 from any state reach Test-Logic-Reset, TLR
+(so does TRST*).
 
 | Current state | TMS=0 → | TMS=1 → | Action in this state |
 |---|---|---|---|
@@ -265,6 +265,12 @@ becomes sticky in two situations:
 2. **Update-DR with a read/write while an op is still in flight** — the
    new request is discarded.
 
+Edge cases worth deciding deliberately in your design (both spec-legal):
+a Capture-DR racing a response that completes in that very cycle should
+report the response result (it arrived in time); but a read/write *attempt*
+racing a completing response should resolve to busy (the in-flight op
+still owned the engine at update time) — the debugger simply retries.
+
 Note on nops: a nop never *starts* anything, so it never triggers source 2
 by itself. But scanning a nop to poll a slow op still reports source 1 if
 the op hasn't completed — the result capture simply isn't ready.
@@ -316,10 +322,10 @@ every DMI scan:
   the request. You need
   `(2 + idle) × T_TCK ≥ latency` → choose `idle` accordingly.
 
-Examples: TCK 10 MHz, DM clock 100 MHz, CDC latency ≈ 6 DM cycles ≈ 60 ns
-≪ 1 TCK (100 ns) → `idle = 1` is ample (the PULP default). TCK 10 MHz but
-DM clock 1 MHz: 6 DM cycles ≈ 6 µs ≈ 60 TCKs → `idle` in the high tens —
-or better, run the DMI handshake faster / reduce sync stages.
+Examples: TCK 10 MHz, DM clock 100 MHz, CDC latency ≈ 6 DM cycles ≈
+60 ns ≪ 1 TCK (100 ns) → `idle = 1` is ample (the PULP default). TCK
+10 MHz but DM clock 1 MHz: 6 DM cycles ≈ 6 µs ≈ 60 TCKs → `idle` in the
+high tens — or better, run the DMI handshake faster / reduce sync stages.
 
 Debuggers adapt dynamically: OpenOCD starts at the reported `idle`,
 increments its dwell every time it sees busy (`dtmcs.dmireset` scan +
@@ -356,13 +362,13 @@ the DTM alive across a system reset to debug reset-related crashes.
 
 The spec leaves the DMI bus format to the designer ("a trivial bus with
 one master and one slave, or ... TileLink or AMBA APB"). A validated
-simple choice (PULP/OpenTitan, and what the RTL skeleton below assumes):
+simple choice (PULP/OpenTitan):
 
 ```systemverilog
 // request (DTM → DM), valid/ready handshake
 dmi_req_valid, dmi_req_ready
-dmi_req_op    [1:0]     // 1 = read, 2 = write   (requests use 0/1/2;
-                        //  3 must never be issued)
+dmi_req_op    [1:0]     // 1 = read, 2 = write (a nop starts nothing,
+                        //  so only 1/2 ever reach the bus; 3 never issued)
 dmi_req_addr  [abits-1:0]
 dmi_req_data  [31:0]    // write payload
 // response (DM → DTM), valid/ready handshake
@@ -399,252 +405,6 @@ proven pattern (OpenTitan `dmi_cdc`):
 If you can, run the whole DMI in the TCK domain and treat the DM's
 register interface as a slow slave (respond within 2 TCKs) — then no CDC
 is needed and `idle` can be 0–1.
-
-## Reference RTL skeleton
-
-A complete, self-contained skeleton in the spirit of the PULP DTM (which
-this was cross-checked against), with the strictness improvements noted in
-[Common pitfalls](#common-pitfalls). It implements the TAP, all four DRs,
-the sticky-op engine, and a valid/ready DMI master in the TCK domain.
-Adapt (CDC, resets, lint) and simulate against the checklist below.
-
-```systemverilog
-module jtag_dtm #(
-  parameter int unsigned Abits      = 7,    // DMI address width (7..32)
-  parameter int unsigned IdleCycles = 1,    // value reported in dtmcs.idle
-  parameter logic [31:0] IdcodeValue = 32'h0000_0001
-) (
-  input  logic        tck_i,
-  input  logic        tms_i,
-  input  logic        tdi_i,
-  input  logic        trst_ni,        // optional; tie high if unused
-  output logic        tdo_o,
-  output logic        tdo_oe_o,
-  // DMI bus, TCK domain (add a CDC behind this if the DM is on clk_sys)
-  output logic              dmi_req_valid_o,
-  input  logic              dmi_req_ready_i,
-  output logic [1:0]        dmi_req_op_o,      // 1=read, 2=write
-  output logic [Abits-1:0]  dmi_req_addr_o,
-  output logic [31:0]       dmi_req_data_o,
-  input  logic              dmi_resp_valid_i,
-  output logic              dmi_resp_ready_o,
-  input  logic [1:0]        dmi_resp_op_i,     // 0=ok, 2=failed
-  input  logic [31:0]       dmi_resp_data_i,
-  output logic              dmi_clear_o       // pulse: drop in-flight DMI op
-);
-  localparam int unsigned DrLen = Abits + 34;
-
-  localparam logic [4:0] IR_IDCODE = 5'h01, IR_DTMCS = 5'h10, IR_DMI = 5'h11;
-
-  // ---------------- TAP FSM ----------------
-  typedef enum logic [3:0] {
-    TestLogicReset, RunTestIdle, SelectDR, CaptureDR, ShiftDR, Exit1DR,
-    PauseDR, Exit2DR, UpdateDR, SelectIR, CaptureIR, ShiftIR, Exit1IR,
-    PauseIR, Exit2IR, UpdateIR
-  } tap_state_e;
-  tap_state_e tap_q, tap_d;
-
-  always_comb begin
-    unique case (tap_q)
-      TestLogicReset: tap_d = tms_i ? TestLogicReset : RunTestIdle;
-      RunTestIdle:    tap_d = tms_i ? SelectDR      : RunTestIdle;
-      SelectDR:       tap_d = tms_i ? SelectIR      : CaptureDR;
-      CaptureDR:      tap_d = tms_i ? Exit1DR       : ShiftDR;
-      ShiftDR:        tap_d = tms_i ? Exit1DR       : ShiftDR;
-      Exit1DR:        tap_d = tms_i ? UpdateDR      : PauseDR;
-      PauseDR:        tap_d = tms_i ? Exit2DR       : PauseDR;
-      Exit2DR:        tap_d = tms_i ? UpdateDR      : ShiftDR;
-      UpdateDR:       tap_d = tms_i ? SelectDR      : RunTestIdle;
-      SelectIR:       tap_d = tms_i ? TestLogicReset: CaptureIR;
-      CaptureIR:      tap_d = tms_i ? Exit1IR       : ShiftIR;
-      ShiftIR:        tap_d = tms_i ? Exit1IR       : ShiftIR;
-      Exit1IR:        tap_d = tms_i ? UpdateIR      : PauseIR;
-      PauseIR:        tap_d = tms_i ? Exit2IR       : PauseIR;
-      Exit2IR:        tap_d = tms_i ? UpdateIR      : ShiftIR;
-      UpdateIR:       tap_d = tms_i ? SelectDR      : RunTestIdle;
-      default:        tap_d = TestLogicReset;
-    endcase
-  end
-
-  wire tap_reset = (tap_q == TestLogicReset);
-  wire cap_dr    = (tap_q == CaptureDR);
-  wire shift_dr  = (tap_q == ShiftDR);
-  wire upd_dr    = (tap_q == UpdateDR);
-  wire cap_ir    = (tap_q == CaptureIR);
-  wire shift_ir  = (tap_q == ShiftIR);
-  wire upd_ir    = (tap_q == UpdateIR);
-
-  // ---------------- IR ----------------
-  logic [4:0] ir_shift_q, ir_q;
-  always_ff @(posedge tck_i or negedge trst_ni) begin
-    if (!trst_ni) begin
-      ir_shift_q <= 5'h01;
-      ir_q        <= IR_IDCODE;          // TAP reset selects IDCODE
-    end else if (tap_reset) begin
-      ir_shift_q <= 5'h01;
-      ir_q        <= IR_IDCODE;
-    end else begin
-      if (cap_ir)          ir_shift_q <= 5'h01;        // [1:0] must be 01
-      else if (shift_ir)  ir_shift_q <= {tdi_i, ir_shift_q[4:1]};
-      if (upd_ir)         ir_q       <= ir_shift_q;
-    end
-  end
-
-  wire sel_idcode = (ir_q == IR_IDCODE);
-  wire sel_dtmcs  = (ir_q == IR_DTMCS);
-  wire sel_dmi    = (ir_q == IR_DMI);
-  wire sel_bypass = !(sel_idcode || sel_dtmcs || sel_dmi); // everything else
-
-  // ---------------- BYPASS and IDCODE ----------------
-  logic        bypass_q;
-  logic [31:0] idcode_q;
-  always_ff @(posedge tck_i or negedge trst_ni) begin
-    if (!trst_ni || tap_reset) begin
-      bypass_q <= 1'b0;
-      idcode_q <= IdcodeValue;
-    end else begin
-      if (cap_dr && sel_bypass)   bypass_q <= 1'b0;
-      if (shift_dr && sel_bypass) bypass_q <= tdi_i;
-      if (cap_dr && sel_idcode)   idcode_q <= IdcodeValue;   // read-only
-      if (shift_dr && sel_idcode) idcode_q <= {tdi_i, idcode_q[31:1]};
-    end
-  end
-
-  // ---------------- dtmcs ----------------
-  // Sticky status shared with the dmi engine below.
-  logic [1:0] error_q;   // 0 = ok, 2 = failed, 3 = busy
-  logic [31:0] dtmcs_q;
-
-  localparam logic [5:0]  AbitsL     = 6'(Abits);
-  localparam logic [2:0]  IdleL      = 3'(IdleCycles);
-  localparam logic [31:0] DtmcsZero  =
-      {14'b0, 1'b0, 1'b0, 1'b0, IdleL, 2'b00, AbitsL, 4'h1};
-      // [31:18]0 [17]0 [16]0 [15]0 [14:12]idle [11:10]0 [9:4]abits [3:0]1
-  wire [31:0] dtmcs_cap = DtmcsZero | (32'(error_q) << 10);
-
-  wire dmi_hard_rst = upd_dr && sel_dtmcs && dtmcs_q[17]; // dmihardreset
-
-  always_ff @(posedge tck_i or negedge trst_ni) begin
-    if (!trst_ni) dtmcs_q <= '0;
-    else begin
-      if (cap_dr && sel_dtmcs)         dtmcs_q <= dtmcs_cap;
-      else if (shift_dr && sel_dtmcs)   dtmcs_q <= {tdi_i, dtmcs_q[31:1]};
-    end
-  end
-
-  // ---------------- dmi engine ----------------
-  typedef enum logic [1:0] {DmiIdle, DmiReq, DmiWait} dmi_state_e;
-  dmi_state_e          dmi_state_q;
-  logic [1:0]          op_q;       // op of the started request
-  logic [Abits-1:0]    addr_q;     // address of last started op
-  logic [31:0]         data_q;     // write payload / read result
-  logic [DrLen-1:0]    dr_q;       // {address, data, op} shift register
-
-  wire [1:0]       s_op   = dr_q[1:0];
-  wire [31:0]      s_data = dr_q[33:2];
-  wire [Abits-1:0] s_addr = dr_q[DrLen-1:34];
-
-  // Result available exactly now? (consumption happens on this TCK)
-  wire resp_now = (dmi_state_q == DmiWait) && dmi_resp_valid_i;
-  // Previous op still unreported at capture time -> busy
-  wire busy_now = (dmi_state_q != DmiIdle) && !resp_now;
-
-  wire [1:0] cap_op = (error_q != 2'b00) ? error_q        // sticky wins
-                   : busy_now            ? 2'b11
-                   : (resp_now && dmi_resp_op_i == 2'b10) ? 2'b10
-                   : 2'b00;
-  wire [DrLen-1:0] dr_cap = {addr_q, data_q, cap_op};
-
-  wire dtm_reset = tap_reset || dmi_hard_rst;   // drop everything
-  assign dmi_clear_o = dtm_reset;   // TAP reset or dmihardreset
-
-  always_ff @(posedge tck_i or negedge trst_ni) begin
-    if (!trst_ni || dtm_reset) begin
-      dr_q        <= '0;
-      dmi_state_q <= DmiIdle;
-      addr_q      <= '0;
-      data_q      <= '0;
-      op_q        <= 2'b00;
-      error_q     <= 2'b00;
-    end else begin
-      // dmi shift register
-      if (cap_dr && sel_dmi)        dr_q <= dr_cap;
-      else if (shift_dr && sel_dmi) dr_q <= {tdi_i, dr_q[DrLen-1:1]};
-
-      // dmireset: clear sticky status only
-      if (upd_dr && sel_dtmcs && dtmcs_q[16]) error_q <= 2'b00;
-
-      // request/response engine
-      unique case (dmi_state_q)
-        DmiIdle: if (upd_dr && sel_dmi && error_q == 2'b00 && s_op != 2'b00) begin
-          addr_q <= s_addr;  data_q <= s_data;  op_q <= s_op;
-          dmi_state_q <= DmiReq;
-        end
-        DmiReq:  if (dmi_req_ready_i) dmi_state_q <= DmiWait;
-        DmiWait: if (dmi_resp_valid_i) begin
-          data_q <= dmi_resp_data_i;                 // read result
-          if (error_q == 2'b00 && dmi_resp_op_i == 2'b10)
-            error_q <= 2'b10;                        // DM-reported failure
-          dmi_state_q <= DmiIdle;
-        end
-        default: dmi_state_q <= DmiIdle;
-      endcase
-
-      // Busy source 1: capture while an op is still in flight
-      if (cap_dr && sel_dmi && busy_now && error_q == 2'b00)
-        error_q <= 2'b11;
-      // Busy source 2: new read/write attempted while one is in flight.
-      // (Wins over the case above on the same edge by being later —
-      // an attempt racing a completing response resolves to busy/retry.)
-      if (upd_dr && sel_dmi && dmi_state_q != DmiIdle
-          && s_op != 2'b00 && error_q == 2'b00)
-        error_q <= 2'b11;
-    end
-  end
-
-  assign dmi_req_valid_o = (dmi_state_q == DmiReq);
-  assign dmi_req_op_o    = op_q;
-  assign dmi_req_addr_o  = addr_q;
-  assign dmi_req_data_o  = data_q;
-  assign dmi_resp_ready_o = (dmi_state_q == DmiWait);
-
-  // ---------------- TDO ----------------
-  logic tdo_mux;
-  always_comb begin
-    if (shift_ir)        tdo_mux = ir_shift_q[0];
-    else if (sel_idcode) tdo_mux = idcode_q[0];
-    else if (sel_dtmcs)  tdo_mux = dtmcs_q[0];
-    else if (sel_dmi)    tdo_mux = dr_q[0];
-    else                 tdo_mux = bypass_q;
-  end
-
-  // TDO changes on the falling edge of TCK (IEEE 1149.1)
-  always_ff @(negedge tck_i or negedge trst_ni) begin
-    if (!trst_ni) begin
-      tdo_o    <= 1'b0;
-      tdo_oe_o <= 1'b0;
-    end else begin
-      tdo_o    <= tdo_mux;
-      tdo_oe_o <= shift_ir || shift_dr;
-    end
-  end
-
-endmodule
-```
-
-Notes on the skeleton:
-
-- `error_q` is the sticky status; it is exactly what Capture-DR reports in
-  `op` and what `dtmcs.dmistat` mirrors.
-- The busy-at-capture and busy-at-attempt checks are gated on `sel_dmi`
-  (scanning IDCODE/dtmcs while an op is in flight must not fabricate a
-  busy report — the PULP DTM omits this gate; harmless there, but be strict).
-- A capture racing a completing response (`resp_now` true at capture
-  time) reports the response result; an *attempt* racing a completing
-  response resolves to busy (the debugger retries) — deterministic and
-  spec-legal.
-- `data_q` after a write or nop keeps the last written/requested value;
-  the spec leaves the captured data undefined there, so that is fine.
 
 ## Worked scan sequences
 
@@ -755,7 +515,9 @@ Simulate (or bench-test) at least these scenarios before trusting the DTM:
   stall forever, `dmihardreset` must actually clear it (the `dmi_clear`
   path), otherwise the debugger can never recover without power cycle.
 - **Reporting busy for scans of other IRs** — gate the busy conditions on
-  the dmi register being selected (see skeleton note).
+  the dmi register being selected: scanning IDCODE or dtmcs while an op
+  is in flight must not fabricate a busy report (the PULP DTM omits this
+  gate; harmless there, but be strict).
 - **dmi register width ≠ abits+34** — OpenOCD builds its scan length from
   `dtmcs.abits`; a mismatch shifts every field and breaks everything.
 - **Multiple TAPs on the chain** — other TAPs must be in BYPASS and their

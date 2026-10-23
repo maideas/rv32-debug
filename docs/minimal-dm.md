@@ -178,14 +178,14 @@ resume:  dmcontrol <= resumereq=1
 ## DTM side requirements
 
 A full implementation guide for this layer (TAP, `dtmcs`/`dmi` registers,
-busy/sticky protocol, CDC, RTL) is in [jtag-dtm.md](jtag-dtm.md).
+busy/sticky protocol, timing, CDC) is in [jtag-dtm.md](jtag-dtm.md).
 
 IR=5 bits; implement IDCODE (0x01), BYPASS (0x00/0x1f + all unimplemented
 IRs), `dtmcs` (0x10: `version=1`, `abits=7` min — spec says 7–32, `idle`,
-`dmireset`/`dmihardreset`, `dmistat`), `dmi` (0x11: 41-bit scan reg:
-`address[6:0]` in bits [40:34], `data[31:0]` in bits [33:2], `op[1:0]` in
-bits [1:0] — op scanned first, address last). If DM logic isn't in the TCK domain,
-set `idle` to cover synchronization.
+`dmireset`/`dmihardreset`, `dmistat`), `dmi` (0x11: with `abits=7`, a
+41-bit scan reg: `address[6:0]` in bits [40:34], `data[31:0]` in bits
+[33:2], `op[1:0]` in bits [1:0] — op scanned first, address last). If the
+DM logic isn't in the TCK domain, set `idle` to cover synchronization.
 
 ## Hart-side hooks the DM needs
 

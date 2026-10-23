@@ -95,8 +95,8 @@ a generic bit-pipe.
 
 The DTM (Chapter 6 of the debug spec, "JTAG DTM") owns the TAP and
 implements two debug registers. A detailed, implementation-ready guide for
-this layer — TAP state machine, scan bit order, sticky/busy protocol, timing
-and RTL — is in [jtag-dtm.md](jtag-dtm.md).
+this layer — TAP state machine, scan bit order, sticky/busy protocol,
+timing, and DMI/CDC — is in [jtag-dtm.md](jtag-dtm.md).
 
 ### dtmcs (IR 0x10) — control/status
 
@@ -162,7 +162,7 @@ A DM can control up to 2^20 harts.
 
 | DMI addr | Register | Function |
 |---|---|---|
-| 0x04–0x0f | data0…data11 | Argument registers for abstract commands (RV32 uses just `data0`) |
+| 0x04–0x0f | data0…data11 | Argument registers for abstract commands (RV32: `data0` for register access, plus `data1` as the Access Memory address) |
 | 0x10 | dmcontrol | Run/reset control (see below) |
 | 0x11 | dmstatus | Status: running/halted/resumed/nonexistent/unavailable/havereset, `version` |
 | 0x12 | hartinfo | What the hart's debug ROM offers (nscratch, dataaccess, dataaddr) |
@@ -222,14 +222,15 @@ An abstract command = write a command word to `command` (0x17), wait for
 command is **Access Register** (`cmdtype=0`):
 
 ```
-[23:20] aarsize (2 = 32-bit → RV32)   [19] aarpostincrement
-[18] postexec (run progbuf after)     [17] transfer   [16] write   [15:0] regno
+[23]=0   [22:20] aarsize (2 = 32-bit → RV32)   [19] aarpostincrement
+[18] postexec (run progbuf after)   [17] transfer   [16] write   [15:0] regno
 ```
 
 `regno` space: `0x0000–0x0fff` CSRs, `0x1000–0x101f` GPRs (x0…x31),
 `0x1020–0x103f` FPRs, `0xc000+` custom. So "read x10 of a halted hart" =
-write data0, then write `command` with `transfer=1, write=0, regno=0x100a`,
-wait for busy to clear, read data0. `postexec` chains in a Program Buffer
+write `command` with `transfer=1, write=0, regno=0x100a`, wait for busy to
+clear, then read `data0` (for a register write, put the value in `data0`
+first and set `write=1`). `postexec` chains in a Program Buffer
 execution. Errors are reported in the sticky `abstractcs.cmderr` (busy /
 not-supported / exception / halt-resume / bus / other, write-1-to-clear).
 
@@ -346,8 +347,9 @@ breakpoint without touching memory.
 
 ## 7. RV32-specific notes
 
-- `aarsize=2` (32-bit) everywhere; only `data0` is needed (`datacount ≥ 1`);
-  `sbdata0`/`sbaddress0` only.
+- `aarsize=2` (32-bit) everywhere; register access needs only `data0`
+  (`datacount ≥ 1`), while Access Memory additionally uses `data1` as
+  the address; SBA needs only `sbdata0`/`sbaddress0`.
 - Program Buffer instructions must be 16-bit (c.* encodings) — an RV32 hart
   in Debug Mode runs in DXLEN=32.
 - On Sv32 systems physical addresses can be 34 bits — `mprven` in dcsr
