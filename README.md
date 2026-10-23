@@ -35,6 +35,7 @@ Read roughly in this order; each links to the others.
 | [docs/minimal-dm.md](docs/minimal-dm.md) | The smallest usable DM register set (single-hart RV32): complete bit maps and field tables for `data0`/`data1`/`dmcontrol`/`dmstatus`/`abstractcs`/`command`, required protocol behaviors, coupled bits, and OpenOCD compatibility |
 | [docs/debug-mode.md](docs/debug-mode.md) | The CPU side of the contract: Debug Mode as an execution state — entry causes, halt behavior, ebreak re-routing, single-step, dret — and the complete wire-level DM↔hart interface (halt/resume/status lines, GPR/CSR/LSU debug ports) required by the minimal DM |
 | [docs/debug-sequences.md](docs/debug-sequences.md) | The usual debugger workflows as concrete, ready-to-use DMI operation listings: connect, halt, inspect, single-step, software breakpoints, block memory transfers (incl. auto-increment bursts), reset-and-debug, detach, error recovery — with all hex values spelled out |
+| [docs/cpp-implementation.md](docs/cpp-implementation.md) | The reference C++ implementation of the debug sequences under `src/`: layering, sequence-to-method map, design decisions, the behavioral mock target, and how to run the self-checking demo |
 
 ## Specifications and sources
 
@@ -48,10 +49,31 @@ Read roughly in this order; each links to the others.
   [`riscv-013.c`](https://github.com/riscv-collab/riscv-openocd/blob/riscv/src/target/riscv/riscv-013.c)
   and its `debug_defines.h`
 
+## Reference C++ implementation
+
+`src/` contains a dependency-free C++17 reference implementation of the
+[debug sequences](docs/debug-sequences.md), layered exactly like the
+documents — see [docs/cpp-implementation.md](docs/cpp-implementation.md)
+for the full walkthrough:
+
+| Layer | Files | What it is |
+|---|---|---|
+| Transport (abstract) | `src/jtag_transport.hpp` | `jtag_ir()` / `jtag_dr()` — implement this against your JTAG adapter or simulation model |
+| DTM | `src/dtm.hpp`, `src/dtm.cpp` | `dmi_write()` / `dmi_read()` / `dmi_poll()`, the `dmi` op protocol, sticky busy recovery |
+| Debug sequences | `src/sequences.hpp`, `src/sequences.cpp` | connect, halt, register/memory access, block transfers (incl. bursts), step, software breakpoints, reset, detach, error recovery |
+| Mock target | `src/mock/` | behavioral TAP + DTM + minimal DM + simple hart (per the docs), with busy/failed injection |
+| Demo | `src/demo.cpp` | runs every sequence against the mock and self-checks |
+
+Build and run the demo (artifacts land in `build/`):
+
+    make test
+
 ## Status
 
-Documentation only — no RTL in this repository (yet). If you are
-implementing a DM, start with [docs/minimal-dm.md](docs/minimal-dm.md)
-for the register set, follow [docs/jtag-dtm.md](docs/jtag-dtm.md) for the
-transport underneath, and use [docs/debug-sequences.md](docs/debug-sequences.md)
-as test-vector material for your simulation.
+Documentation plus the reference C++ implementation above — no RTL in
+this repository (yet). If you are implementing a DM, start with
+[docs/minimal-dm.md](docs/minimal-dm.md) for the register set, follow
+[docs/jtag-dtm.md](docs/jtag-dtm.md) for the transport underneath, and
+use [docs/debug-sequences.md](docs/debug-sequences.md) as test-vector
+material for your simulation — the sequences in `src/sequences.cpp`
+drive exactly those values.
