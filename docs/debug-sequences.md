@@ -55,8 +55,19 @@ poll <addr> until <cond>        repeat the read until the condition holds
   Poll `abstractcs`, nothing else.
 - While an abstract command executes, `haltreq`, `resumereq` and
   `ackhavereset` must all be 0 (spec rule).
-- Register addresses: `dmcontrol`=0x10, `dmstatus`=0x11, `abstractcs`=0x16,
-  `command`=0x17, `data0`=0x04, `data1`=0x05.
+- The `dmi` operations below use **symbolic DM register names** instead of
+  hex addresses — `dmi write dmcontrol <- ...` rather than
+  `dmi write 0x10 <- ...`. The names are the ones the spec uses; the
+  addresses they stand for (see [minimal-dm.md](minimal-dm.md)):
+
+| Name | DMI address | Name | DMI address |
+|---|---|---|---|
+| `data0` | 0x04 | `data1` | 0x05 |
+| `dmcontrol` | 0x10 | `dmstatus` | 0x11 |
+| `abstractcs` | 0x16 | `command` | 0x17 |
+| `abstractauto` | 0x18 | | |
+
+  (`abstractauto` exists only with the optional burst extension.)
 
 Handy `dmstatus` bit masks:
 
@@ -85,20 +96,24 @@ Bring up the transport, then the DM, then learn what exists:
 2. JTAG: select dtmcs, scan ->
    version = 1, abits, idle          # learn scan width + dwell
 3. JTAG: select IR = 0x11 (dmi)      # stays selected from here on
-4. dmi write 0x10 <- 0x0000_0001     # dmcontrol: dmactive=1 (DM out of reset)
-5. dmi read  0x11 -> dmstatus        # expect version=2, authenticated=1,
+4. dmi write dmcontrol <- 0x0000_0001     # dmcontrol: dmactive=1 (DM out of reset)
+5. dmi read  dmstatus -> dmstatus        # expect version=2, authenticated=1,
                                       # and allrunning or allhalted
 ```
 
 Then probe the capability bits — everything absent reads 0:
 
 ```
-dmi read 0x16 -> abstractcs          # progbufsize=0, datacount=2
-dmi read 0x12 -> hartinfo = 0        # no debug ROM shadowing
-dmi read 0x38 -> sbcs = 0            # no System Bus Access
-dmi write 0x10 <- 0xFFFF_FFFF        # write all-ones to hartsel,
-dmi read  0x10 -> dmcontrol          # read back: hartsel bits read 0
-                                      # => HARTSELLEN=0 => single hart
+dmi read abstractcs -> abstractcs          # progbufsize=0, datacount=2
+dmi read hartinfo   -> hartinfo = 0        # no debug ROM shadowing
+dmi read sbcs       -> sbcs = 0            # no System Bus Access
+                                           # (hartinfo = 0x12, sbcs = 0x38 —
+                                           #  probed but not in the minimal set)
+dmi write dmcontrol <- 0xFFFF_FFFF        # all-ones probe: every bit 1,
+                                           # in particular all 20 hartsel bits
+                                           # (the DM keeps only writable bits)
+dmi read  dmcontrol -> dmcontrol           # read back: hartsel bits read 0
+                                           # => HARTSELLEN=0 => single hart
 ```
 
 From here on, `dmcontrol` writes always carry `dmactive=1` (bit 0), or
@@ -107,14 +122,15 @@ the DM forgets everything.
 ## Halting the hart
 
 ```
-dmi write 0x10 <- 0x8000_0001        # dmcontrol: dmactive | haltreq
-poll 0x11 until (v & 0x200) != 0     # dmstatus.allhalted
+dmi write dmcontrol <- 0x8000_0001        # 0x8000_0000 = haltreq (bit 31)
+                                           # | 0x1 = dmactive
+poll dmstatus until (v & 0x200) != 0      # 0x200 = allhalted (bit 9)
 ```
 
 - `haltreq` may stay 1 after the halt (it re-catches a hart that comes
-  out of reset), or be cleared (`dmi write 0x10 <- 0x0000_0001`).
+  out of reset), or be cleared (write just `0x0000_0001` = `dmactive`).
   Before starting abstract commands it must be 0.
-- A hart halted this way reports `dcsr.cause = 3`.
+- A hart halted this way reports `dcsr.cause = 3` (halt request).
 
 If the hart never halts, check why before retrying:
 `(dmstatus & 0x4000)` → nonexistent (bad index), `(dmstatus & 0x2000)` →
@@ -125,15 +141,15 @@ unavailable (in reset — see [Reset and debug from reset](#reset-and-debug-from
 Once halted, read `dcsr` and `dpc` through Access Register commands:
 
 ```
-dmi write 0x17 <- 0x0022_07B0       # command: Access Register, aarsize=32,
+dmi write command <- 0x0022_07B0       # command: Access Register, aarsize=32,
                                      # transfer, regno=0x7b0 (dcsr)
-poll 0x16 until (v & 0x1000) == 0   # abstractcs.busy cleared
+poll abstractcs until (v & 0x1000) == 0   # abstractcs.busy cleared
                                      # (also check cmderr == 0: (v & 0x700) == 0)
-dmi read  0x04 -> dcsr               # data0 holds the value
+dmi read  data0 -> dcsr               # data0 holds the value
 
-dmi write 0x17 <- 0x0022_07B1       # same, regno=0x7b1 (dpc)
-poll 0x16 until (v & 0x1000) == 0
-dmi read  0x04 -> dpc
+dmi write command <- 0x0022_07B1       # same, regno=0x7b1 (dpc)
+poll abstractcs until (v & 0x1000) == 0
+dmi read  data0 -> dpc
 ```
 
 `dcsr.cause` (`(dcsr >> 6) & 0x7`) tells you why the hart is in Debug
@@ -171,21 +187,21 @@ As a formula: `command = 0x0022_0000 | (0x1000 | N)` to read,
 Reading a GPR — here x10 (regno 0x100A):
 
 ```
-dmi write 0x17 <- 0x0022_100A       # command: Access Register,
+dmi write command <- 0x0022_100A       # command: Access Register,
                                      # aarsize=2, transfer=1, write=0, regno=0x100A
-poll 0x16 until busy==0 && cmderr==0
+poll abstractcs until busy==0 && cmderr==0
                                      # cmderr==0 → the transfer happened
-dmi read  0x04 -> value              # data0 = x10
+dmi read  data0 -> value              # data0 = x10
 ```
 
 Writing a GPR — the argument goes to `data0` **before** the command
 (the DM latches `data0` when the command starts):
 
 ```
-dmi write 0x04 <- value              # data0 = the value for x10
-dmi write 0x17 <- 0x0023_100A       # command: Access Register,
+dmi write data0 <- value              # data0 = the value for x10
+dmi write command <- 0x0023_100A       # command: Access Register,
                                      # aarsize=2, transfer=1, write=1, regno=0x100A
-poll 0x16 until busy==0 && cmderr==0
+poll abstractcs until busy==0 && cmderr==0
 ```
 
 Full worked example — GPR register dump (the classic debugger `reg`
@@ -193,9 +209,9 @@ command), halted hart:
 
 ```
 for N in 0 .. 31:
-    dmi write 0x17 <- 0x0022_1000 | N        # Access Register, read xN
-    poll 0x16 until busy==0 && cmderr==0
-    dmi read  0x04 -> regs[N]               # data0
+    dmi write command <- 0x0022_1000 | N        # Access Register, read xN
+    poll abstractcs until busy==0 && cmderr==0
+    dmi read  data0 -> regs[N]               # data0
 ```
 
 That is 32 identical iterations — one command + one poll + one data0
@@ -243,16 +259,16 @@ One load/store through the halted hart, address in `data1`, data in
 
 ```
 # read a word:
-dmi write 0x05 <- addr               # data1 = address
-dmi write 0x17 <- 0x0220_0000        # Access Memory, aamsize=2 (32-bit), read
-poll 0x16 until busy==0 && cmderr==0
-dmi read  0x04 -> word               # data0 = value
+dmi write data1 <- addr               # data1 = address
+dmi write command <- 0x0220_0000        # Access Memory, aamsize=2 (32-bit), read
+poll abstractcs until busy==0 && cmderr==0
+dmi read  data0 -> word               # data0 = value
 
 # write a word:
-dmi write 0x04 <- value              # data0 = value first
-dmi write 0x05 <- addr               # data1 = address
-dmi write 0x17 <- 0x0221_0000        # ... + write bit
-poll 0x16 until busy==0 && cmderr==0
+dmi write data0 <- value              # data0 = value first
+dmi write data1 <- addr               # data1 = address
+dmi write command <- 0x0221_0000        # ... + write bit
+poll abstractcs until busy==0 && cmderr==0
 ```
 
 Other access sizes (byte/halfword command words and strides) are listed
@@ -277,20 +293,20 @@ arithmetic; the DM just does one access per command.
 
 ```
 for i in 0 .. count-1:
-    dmi write 0x05 <- addr + 4*i           # data1 = address of word i
-    dmi write 0x17 <- 0x0220_0000         # Access Memory, 32-bit, read
-    poll 0x16 until busy==0 && cmderr==0
-    dmi read  0x04 -> buf[i]               # data0 = word i
+    dmi write data1 <- addr + 4*i           # data1 = address of word i
+    dmi write command <- 0x0220_0000         # Access Memory, 32-bit, read
+    poll abstractcs until busy==0 && cmderr==0
+    dmi read  data0 -> buf[i]               # data0 = word i
 ```
 
 **Writing `count` words starting at `addr`:**
 
 ```
 for i in 0 .. count-1:
-    dmi write 0x04 <- buf[i]               # data0 = value first
-    dmi write 0x05 <- addr + 4*i           # data1 = address
-    dmi write 0x17 <- 0x0221_0000         # Access Memory, 32-bit, write
-    poll 0x16 until busy==0 && cmderr==0
+    dmi write data0 <- buf[i]               # data0 = value first
+    dmi write data1 <- addr + 4*i           # data1 = address
+    dmi write command <- 0x0221_0000         # Access Memory, 32-bit, write
+    poll abstractcs until busy==0 && cmderr==0
 ```
 
 Command words for all sizes (`write` is bit 16):
@@ -355,17 +371,18 @@ together one DMI op per word.
 
 ```
 # setup:
-dmi write 0x05 <- addr               # data1 = start address
-dmi write 0x17 <- 0x0228_0000        # Access Memory, 32-bit, read,
+dmi write data1 <- addr               # data1 = start address
+dmi write command <- 0x0228_0000        # Access Memory, 32-bit, read,
                                      # aampostincrement=1 -> word 0 in data0
-poll 0x16 until busy==0 && cmderr==0
-dmi write 0x18 <- 0x0000_0001        # abstractauto: autoexecdata bit 0
+poll abstractcs until busy==0 && cmderr==0
+dmi write abstractauto <- 0x0000_0001        # bit 0 = autoexecdata[0]: any
+                                           # data0 access re-runs command
 # burst: each data0 read returns one word AND triggers the next access:
 for i in 0 .. count-2:
-    dmi read  0x04 -> buf[i]          # = word i; triggers access i+1
-dmi write 0x18 <- 0x0000_0000        # disable autoexec (no extra access)
-poll 0x16 until busy==0 && cmderr==0
-dmi read  0x04 -> buf[count-1]       # last word, no trigger
+    dmi read  data0 -> buf[i]          # = word i; triggers access i+1
+dmi write abstractauto <- 0x0000_0000        # disable autoexec (no extra access)
+poll abstractcs until busy==0 && cmderr==0
+dmi read  data0 -> buf[count-1]       # last word, no trigger
 ```
 
 **Write burst** (same features — note `data0` must hold `buf[0]`
@@ -374,17 +391,17 @@ execution immediately):
 
 ```
 # setup:
-dmi write 0x05 <- addr               # data1 = start address
-dmi write 0x04 <- buf[0]             # data0 = first value
-dmi write 0x17 <- 0x0229_0000        # Access Memory, 32-bit, write,
+dmi write data1 <- addr               # data1 = start address
+dmi write data0 <- buf[0]             # data0 = first value
+dmi write command <- 0x0229_0000        # Access Memory, 32-bit, write,
                                      # aampostincrement=1 -> stores buf[0]
-poll 0x16 until busy==0 && cmderr==0
-dmi write 0x18 <- 0x0000_0001        # autoexec on data0
+poll abstractcs until busy==0 && cmderr==0
+dmi write abstractauto <- 0x0000_0001        # autoexec on data0
 # burst: each data0 write stores one word AND triggers the next:
 for i in 1 .. count-1:
-    dmi write 0x04 <- buf[i]
-dmi write 0x18 <- 0x0000_0000        # disable autoexec
-poll 0x16 until busy==0 && cmderr==0
+    dmi write data0 <- buf[i]
+dmi write abstractauto <- 0x0000_0000        # disable autoexec
+poll abstractcs until busy==0 && cmderr==0
 ```
 
 **Intermediate variant** — `aampostincrement` only (no `abstractauto`):
@@ -415,8 +432,9 @@ mode.
 ## Resuming
 
 ```
-dmi write 0x10 <- 0x4000_0001        # dmcontrol: dmactive | resumereq
-poll 0x11 until (v & 0x20000) != 0   # dmstatus.allresumeack
+dmi write dmcontrol <- 0x4000_0001        # 0x4000_0000 = resumereq (bit 30)
+                                           # | 0x1 = dmactive
+poll dmstatus until (v & 0x20000) != 0    # 0x20000 = allresumeack (bit 17)
 ```
 
 `resumereq` is a one-shot (write 1 = resume once). `resumeack` is set by
@@ -427,13 +445,16 @@ and `allhalted` would mislead you into thinking it never resumed.
 ## Single stepping
 
 ```
-dmi write 0x04 <- (saved_dcsr | 0x4)     # data0 = dcsr with step (bit 2) set
-dmi write 0x17 <- 0x0023_07B0             # write dcsr
-poll 0x16 until busy==0 && cmderr==0
+dmi write data0 <- (saved_dcsr | 0x4)     # 0x4 = dcsr.step (bit 2); OR it
+                                           # into the saved dcsr to keep
+                                           # cause/prv/ebreak bits intact
+dmi write command <- 0x0023_07B0         # Access Register, write dcsr
+                                           # (regno 0x7B0)
+poll abstractcs until busy==0 && cmderr==0
 
-dmi write 0x10 <- 0x4000_0001             # resumereq
-poll 0x11 until allresumeack              # it did resume...
-poll 0x11 until allhalted                 # ...and re-halted after ONE instruction
+dmi write dmcontrol <- 0x4000_0001             # resumereq
+poll dmstatus until allresumeack              # it did resume...
+poll dmstatus until allhalted                 # ...and re-halted after ONE instruction
                                           # dcsr.cause = 4, dpc advanced
 ```
 
@@ -460,21 +481,26 @@ First check whether compressed instructions exist:
 
 ```
 # read the original instruction word at A (see Memory access):
-dmi write 0x05 <- A
-dmi write 0x17 <- 0x0220_0000
-poll 0x16 ...
-dmi read 0x04 -> w0                  # save w0 in the breakpoint table
+dmi write data1 <- A
+dmi write command <- 0x0220_0000
+poll abstractcs ...
+dmi read data0 -> w0                  # save w0 in the breakpoint table
 
 if (w0 & 0x3) == 0x3:                 # 32-bit instruction
-    dmi write 0x04 <- 0x0010_0073    # ebreak
-    dmi write 0x05 <- A
-    dmi write 0x17 <- 0x0221_0000    # 32-bit write
-    poll 0x16 ...                     # length = 4
+    dmi write data0 <- 0x0010_0073    # ebreak = SYSTEM opcode (0x73) with
+                                      # imm=1, rs1=0, rd=0 — a breakpoint
+                                      # that Debug Mode catches when routed
+                                      # by dcsr.ebreakm/ebreaku/ebreaks
+    dmi write data1 <- A
+    dmi write command <- 0x0221_0000    # 32-bit write
+    poll abstractcs ...                     # length = 4
 else:                                 # 16-bit compressed instruction
-    dmi write 0x04 <- 0x9002         # c.ebreak
-    dmi write 0x05 <- A
-    dmi write 0x17 <- 0x0211_0000    # 16-bit write (aamsize=1!)
-    poll 0x16 ...                     # length = 2
+    dmi write data0 <- 0x9002         # c.ebreak = compressed quadrant-1
+                                      # instruction (op=0x4, fun=0x2) —
+                                      # the 16-bit form of ebreak
+    dmi write data1 <- A
+    dmi write command <- 0x0211_0000    # 16-bit write (aamsize=1!)
+    poll abstractcs ...                     # length = 2
 ```
 
 The 16-bit store is required: a 32-bit store would clobber the
@@ -482,15 +508,15 @@ The 16-bit store is required: a 32-bit store would clobber the
 the read-modify-write trick instead: write the full word
 `(w0 & 0xFFFF_0000) | 0x9002`.
 
-Also set `dcsr.ebreakm` (bit 15) at attach if the debuggee runs in
-M-mode (`dcsr = saved_dcsr | 0x8000`), and `ebreaku`/`ebreaks` per
+Also set `dcsr.ebreakm` (bit 15, `0x8000`) at attach if the debuggee runs
+in M-mode (`dcsr = saved_dcsr | 0x8000`), and `ebreaku`/`ebreaks` per
 privilege — otherwise the patched `ebreak` traps to the *debuggee's*
 trap handler instead of Debug Mode.
 
 ### Hitting
 
 ```
-poll 0x11 until allhalted
+poll dmstatus until allhalted
 # read dcsr/dpc (see above):
 cause = 1                             # ebreak => breakpoint hit
 dpc == A                              # dpc holds the address OF the ebreak
@@ -526,11 +552,13 @@ works just as well — halt out of reset and debug from the very first
 instruction:
 
 ```
-dmi write 0x10 <- 0x8000_0003        # dmactive | haltreq | ndmreset
-                                     # (everything except DM/DTM in reset)
+dmi write dmcontrol <- 0x8000_0003        # 0x8000_0002 would be ndmreset
+                                            # alone; here: haltreq (0x8000_0000)
+                                            # | ndmreset (0x2) | dmactive (0x1)
+                                            # -> everything except DM/DTM in reset
 ... hold as long as needed ...
-dmi write 0x10 <- 0x8000_0001        # release ndmreset, haltreq stays
-poll 0x11 until allhalted            # hart halts as it leaves reset,
+dmi write dmcontrol <- 0x8000_0001        # release ndmreset, haltreq stays
+poll dmstatus until allhalted            # hart halts as it leaves reset,
                                      # BEFORE executing its first instruction
 read dpc                             # = the reset vector / first fetch address
 ```
@@ -552,10 +580,10 @@ Leave the target running as if no debugger had ever been there:
 1. remove all breakpoints (restore every patched word)
 2. restore dcsr (from the value saved at attach: clears ebreakm,
    step, etc.)
-3. dmi write 0x10 <- 0x0000_0001      # clear haltreq, dmactive stays 1
+3. dmi write dmcontrol <- 0x0000_0001      # clear haltreq, dmactive stays 1
 4. resumereq; poll allresumeack       # run
    (skip if the hart was already running when you attached)
-5. optional: dmi write 0x10 <- 0x0000_0000   # dmactive=0: DM pristine,
+5. optional: dmi write dmcontrol <- 0x0000_0000   # dmactive=0: DM pristine,
                                              # all debug state reset
 ```
 
@@ -580,7 +608,7 @@ in a batch) did not run. Decode:
 | 7 | other | implementation-specific |
 
 Clear with write-1-to-the-bits: `cmderr=2` → `0x200`, any → `0x700`
-(`dmi write 0x16 <- 0x200`). Then fix the cause and re-issue.
+(`dmi write abstractcs <- 0x200`). Then fix the cause and re-issue.
 
 **2. DMI busy (`dmi` scan returns `op=3`).** The DM did not finish the
 previous operation before the next capture — rare with this DM (its
@@ -597,7 +625,7 @@ do the [Reset and debug from reset](#reset-and-debug-from-reset) flow.
 `anynonexistent` → wrong hart index. Otherwise ndmreset pulse with
 `haltreq` held and retry.
 
-**5. Everything wedged.** `dmi write 0x10 <- 0` then `1`: `dmactive=0`
+**5. Everything wedged.** `dmi write dmcontrol <- 0` then `1`: `dmactive=0`
 resets the whole DM (data registers, cmderr, sticky bits) — the
 universal unwedge. Re-init from scratch. If even that stops responding,
 `dtmcs.dmihardreset` at the DTM layer.
