@@ -96,7 +96,10 @@ abstract-command FSM and the hart's own register/memory logic, and status
 lines out of the hart that `dmstatus` mirrors to the debugger. Everything
 else — `dcsr`/`dpc`-adjacent bookkeeping, breakpoints, stepping — is
 behavior *around* these wires, described in
-[debug-mode.md](debug-mode.md).
+[debug-mode.md](debug-mode.md). This diagram, the
+[handshake timeline](#halt-and-resume-handshake-timeline), and the
+[reset table](#reset-interactions) below are kept in sync with their
+counterparts in [debug-mode.md](debug-mode.md) — update both together.
 
 ## DM-to-hart signals
 

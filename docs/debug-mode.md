@@ -347,7 +347,11 @@ and the hart (distilled, signal by signal, into the standalone reference
 [dm-hart-interface.md](dm-hart-interface.md)). This is the complete
 interface for the minimal DM of [minimal-dm.md](minimal-dm.md) — a
 handful of request/status lines, three data-access ports, and the reset
-wire:
+wire. The diagram below, the
+[handshake timeline](#halt-and-resume-handshake-as-a-timeline), and the
+[reset table](#reset-interactions) further down are kept in sync with
+their counterparts in [dm-hart-interface.md](dm-hart-interface.md) —
+update both together:
 
 ```
 ┌─────────────────────────────────┐              ┌────────────────────────────────┐

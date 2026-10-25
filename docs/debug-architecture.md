@@ -398,7 +398,11 @@ breakpoint without touching memory.
 - **1.0 (ratified February 2025)** kept the DMI protocol, JTAG IR map, and every
   register address above; `dmstatus.version=3`, `dtmcs.version` stays 1
   (plus a new `errinfo` field; `dmihardreset` is renamed `dtmhardreset`),
-  `dcsr.cause` gains values 6 (halt group) and 7 (other), the content was restructured into named
-  extensions (Sdext for the external-debug parts, Sdtrig for triggers), with
-  richer triggers and clarifications. A 1.0 debugger is nearly a drop-in
-  over 0.13 hardware for the core flow.
+  `dcsr.cause` gains values 6 (halt group) and 7 (other). Register
+  *layouts* did grow beyond the fields shown in this document, though:
+  `dcsr` renames `xdebugver` to `debugver` and adds fields (`v`,
+  `ebreakvs`/`ebreakvu`, `cetrig`, `pelp`, `extcause`), and `dmstatus`
+  adds `ndmresetpending`/`stickyunavail`. The content was restructured
+  into named extensions (Sdext for the external-debug parts, Sdtrig for
+  triggers), with richer triggers and clarifications. A 1.0 debugger is
+  nearly a drop-in over 0.13 hardware for the core flow.

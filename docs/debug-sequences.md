@@ -108,8 +108,9 @@ Then probe the capability bits — everything absent reads 0:
 dmi read abstractcs -> abstractcs          # progbufsize=0, datacount=2
 dmi read hartinfo   -> hartinfo = 0        # no debug ROM shadowing
 dmi read sbcs       -> sbcs = 0            # no System Bus Access
-                                           # (hartinfo = 0x12, sbcs = 0x38 —
-                                           #  probed but not in the minimal set)
+                                           # (hartinfo/sbcs are at DMI
+                                           #  addresses 0x12/0x38 — probed,
+                                           #  but outside the minimal set)
 dmi write dmcontrol <- 0x07FF_FFC1        # feature probe: hasel (bit 26) | all
                                            # 20 hartsel bits (25:16, 15:6) |
                                            # dmactive — request bits stay 0
@@ -144,8 +145,8 @@ unavailable (in reset — see [Reset and debug from reset](#reset-and-debug-from
 Once halted, read `dcsr` and `dpc` through Access Register commands:
 
 ```
-dmi write command <- 0x0022_07B0       # command: Access Register, aarsize=32,
-                                     # transfer, regno=0x7b0 (dcsr)
+dmi write command <- 0x0022_07B0       # command: Access Register, aarsize=2
+                                     # (32-bit), transfer, regno=0x7b0 (dcsr)
 poll abstractcs until (v & 0x1000) == 0   # abstractcs.busy cleared
                                      # (also check cmderr == 0: (v & 0x700) == 0)
 dmi read  data0 -> dcsr               # data0 holds the value
@@ -486,6 +487,13 @@ First check whether compressed instructions exist:
 2-byte aligned: for an `A` with `A % 4 == 2`, read the original with a
 16-bit access (`0x0210_0000`) first, then read the second halfword at
 `A+2` only if `(w0 & 0x3) == 0x3`.
+
+The [installing](#installing-always-while-halted) flow below shows the
+word-aligned case (`A % 4 == 0`), where a single 32-bit read captures the
+whole instruction. For `A % 4 == 2` slots, use the two 16-bit halfword
+reads above instead — [src/sequences.cpp](../src/sequences.cpp) saves both
+halfwords this way, so the restore and the single step past the hit
+reassemble the full instruction.
 
 ### Installing (always while halted)
 
