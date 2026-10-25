@@ -492,7 +492,9 @@ Simulate (or bench-test) at least these scenarios before trusting the DTM:
 10. **Interop**: connect OpenOCD (board config with `jtag newtap` —
    `-irlen 5`, `-expected-id` your IDCODE — and a `target create` using
    the `riscv` target type) and run `init; halt; reg; resume` against a
-   minimal DM.
+   minimal DM — or SEGGER's native stack (`JLinkExe -device RV32 -if
+   JTAG`, which auto-detects a spec-conformant TAP; see
+   [toolchain-integration.md](toolchain-integration.md)).
 
 ## Common pitfalls
 

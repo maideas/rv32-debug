@@ -1,8 +1,8 @@
 # RV32 Debug
 
 A documentation set for **RISC-V RV32 external debug support** — the
-hardware structures that let a debugger (GDB via OpenOCD, or similar)
-halt, inspect, single-step, and resume a RISC-V hart over JTAG.
+hardware structures that let a debugger (GDB via OpenOCD, SEGGER J-Link,
+or similar) halt, inspect, single-step, and resume a RISC-V hart over JTAG.
 
 The documents describe the debug architecture of the RISC-V External
 Debug Support specification (versions 0.13.2 and ratified 1.0), with all
@@ -40,7 +40,7 @@ Read roughly in this order; each links to the others.
 | [docs/dm-hart-interface.md](docs/dm-hart-interface.md) | The DM↔hart bundle as a standalone signal reference: every request/status line and data port, its meaning and handling rules — plus handshake timeline, reset interactions, and what the full spec adds |
 | [docs/debug-sequences.md](docs/debug-sequences.md) | The usual debugger workflows as concrete, ready-to-use DMI operation listings: connect, halt, inspect, single-step, software breakpoints, block memory transfers (incl. auto-increment bursts), reset-and-debug, detach, error recovery — with all hex values spelled out |
 | [docs/flash-loaders.md](docs/flash-loaders.md) | How a debugger programs flash: target-side loader binaries — why they exist, why they run *outside* Debug Mode as ordinary resumed code at `dcsr.prv`, the OpenOCD `target_run_algorithm` sequence, the loader contract, and how it maps onto the minimal DM's primitives |
-| [docs/toolchain-integration.md](docs/toolchain-integration.md) | What you must ship *to* the tools: JEDEC/IDCODE allocation, the `misa`/`marchid`/`mvendorid` identity block, OpenOCD's discovery contract at `init`, writing the target `.cfg` (tap/target/`riscv` commands, events), reset scripting, flash support, and the GDB side — verified against OpenOCD driver source and shipped chip configs |
+| [docs/toolchain-integration.md](docs/toolchain-integration.md) | What you must ship *to* the tools: JEDEC/IDCODE allocation, the `misa`/`marchid`/`mvendorid` identity block, OpenOCD's discovery contract at `init`, writing the target `.cfg` (tap/target/`riscv` commands, events), reset scripting, flash support, and the GDB side — plus the SEGGER J-Link path: native stack vs OpenOCD-on-J-Link, device database vs generic `RV32`, GDB server/Ozone usage, and where the native driver differs — verified against OpenOCD driver source, shipped chip configs, and SEGGER's support docs |
 | [docs/cpp-implementation.md](docs/cpp-implementation.md) | The reference C++ implementation of the debug sequences under `src/`: layering, sequence-to-method map, design decisions, the behavioral mock target, and how to run the self-checking demo |
 
 ## Specifications and sources
@@ -54,6 +54,11 @@ Read roughly in this order; each links to the others.
 - OpenOCD
   [`riscv-013.c`](https://github.com/riscv-collab/riscv-openocd/blob/riscv/src/target/riscv/riscv-013.c)
   and its `debug_defines.h`
+- SEGGER J-Link RISC-V support: the [support
+  overview](https://www.segger.com/products/debug-probes/j-link/technology/cpus-and-devices/risc-v-support/)
+  and [knowledge base](https://kb.segger.com/J-Link_RISC-V) — what the
+  native J-Link stack implements, cited in
+  [docs/toolchain-integration.md](docs/toolchain-integration.md)
 
 ## Reference C++ implementation
 

@@ -49,6 +49,11 @@ poll <addr> until <cond>        repeat the read until the condition holds
   (request + result), roughly 95 TCK cycles plus the Run-Test/Idle dwell
   reported in `dtmcs.idle` — see [jtag-dtm.md](jtag-dtm.md). Real
   debuggers batch many scans per JTAG transaction.
+- The listings are debugger-agnostic: OpenOCD's `riscv-013` driver issues
+  (close to) exactly these sequences, and so does SEGGER's native J-Link
+  driver — tool-specific deviations (memory-access preference, batching)
+  are noted in
+  [toolchain-integration.md](toolchain-integration.md).
 - Reads of `dmstatus` and `abstractcs` are side-effect-free — safe to
   poll in a loop.
 - While `abstractcs.busy` is set, never read/write `data0`/`data1` and

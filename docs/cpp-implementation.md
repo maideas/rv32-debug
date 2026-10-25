@@ -221,7 +221,13 @@ including the busy ratchet and the `dmactive` unwedge.
 To drive real hardware, implement the three pure-virtual methods of
 `JtagTransport` in [`src/jtag_transport.hpp`](../src/jtag_transport.hpp)
 against your adapter and construct `JtagDtm` on it — nothing above that
-layer changes.
+layer changes. If the adapter is a SEGGER J-Link, the [J-Link
+SDK](https://www.segger.com/products/debug-probes/j-link/tools/j-link-sdk/)
+(the DLL behind `JLinkExe`) exposes low-level JTAG communication for
+exactly this kind of host-side driver; the alternative is to not drive the
+probe yourself at all and let OpenOCD (`adapter driver jlink`) or SEGGER's
+native RISC-V driver do it — see
+[toolchain-integration.md](toolchain-integration.md).
 
 ## References
 

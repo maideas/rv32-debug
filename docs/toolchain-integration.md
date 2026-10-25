@@ -1,11 +1,13 @@
-# Toolchain Integration: Making Your Chip Work with OpenOCD and GDB
+# Toolchain Integration: Making Your Chip Work with OpenOCD, GDB, and SEGGER J-Link
 
 The other documents in this survey describe what the debugger does *to* you:
 the scans, commands, and register protocols of the debug spec. This one is
 about what you must ship *to* the debugger when you build your own silicon:
 an identity your chip reports correctly, debug logic that survives OpenOCD's
 discovery sequence, the OpenOCD and GDB configuration for your part, and the
-glue (breakpoints, reset, flash) that makes board bring-up work. It is the
+glue (breakpoints, reset, flash) that makes board bring-up work — plus, if
+your field debugger is a SEGGER J-Link, what its *native* stack expects
+instead (see [SEGGER J-Link](#segger-j-link)). It is the
 difference between "a debug module that implements the spec" and "a chip a
 customer can type `target remote :3333` into and debug".
 
@@ -26,7 +28,16 @@ shipped OpenOCD target configs
 and the [RISC-V target
 features](https://sourceware.org/gdb/current/onlinedocs/gdb/RISC_002dV-Features.html)
 documentation); the RISC-V Privileged Architecture manual (the `marchid`
-allocation rules); and JEDEC JEP106 (manufacturer ID assignment). All
+allocation rules); and JEDEC JEP106 (manufacturer ID assignment). For the
+J-Link sections: SEGGER's [RISC-V support
+overview](https://www.segger.com/products/debug-probes/j-link/technology/cpus-and-devices/risc-v-support/)
+and [J-Link RISC-V knowledge base article](https://kb.segger.com/J-Link_RISC-V)
+(spec versions, memory-access selection logic, TAP auto-detection,
+limitations), the [J-Link Commander](https://kb.segger.com/J-Link_Commander)
+and [J-Link GDB Server](https://kb.segger.com/J-Link_GDB_Server) references,
+and a real [J-Link connect log of a 0.13 RISC-V
+target](https://forum.segger.com/thread/7729-SOLVED-incorrect-decoding-of-RISC-V-instructions/)
+from the SEGGER forum. All
 behavior below was verified against those sources.
 
 ## Table of contents
@@ -38,6 +49,11 @@ behavior below was verified against those sources.
 - [Reset: the part you almost always have to script](#reset-the-part-you-almost-always-have-to-script)
 - [Flash support](#flash-support)
 - [GDB against the target](#gdb-against-the-target)
+- [SEGGER J-Link](#segger-j-link)
+  - [What the native stack supports](#what-the-native-stack-supports)
+  - [Where the native driver differs from OpenOCD](#where-the-native-driver-differs-from-openocd)
+  - [Using the native stack](#using-the-native-stack)
+  - [What to ship for the J-Link ecosystem](#what-to-ship-for-the-j-link-ecosystem)
 - [Bring-up checklist](#bring-up-checklist)
 - [Related documents](#related-documents)
 
@@ -61,7 +77,10 @@ spec-compliant DM, because the DM describes itself (through `dtmcs`,
 `dmstatus`, `abstractcs`, `sbcs`, `hartinfo`, `tinfo`, …). Your chip-specific
 surface is: a Tcl config, the identity values, and whatever is *not* in the
 spec (custom IR encodings, custom CSRs, reset sequencing, flash). That is
-what this document covers.
+what this document covers. SEGGER's native J-Link stack is the same idea
+with a different config mechanism — one generic RISC-V driver plus
+per-device *database entries* instead of Tcl — see
+[SEGGER J-Link](#segger-j-link).
 
 ## Identity: IDCODE, JEDEC, and the CSR identity block
 
@@ -160,7 +179,9 @@ All three must be readable; all are MXLEN-bit read-only.
 When OpenOCD processes `init` (or a gdb-attach), the `riscv-013` driver runs
 a fixed discovery sequence against your TAP/DTM/DM. This is the
 compatibility contract your debug logic must pass — every step maps to a
-document in this survey:
+document in this survey. SEGGER's native J-Link driver runs a discovery of
+the same shape; where it differs is covered in
+[SEGGER J-Link](#segger-j-link) below.
 
 | # | What OpenOCD does | What your hardware must do | Details in |
 |---|---|---|---|
@@ -413,6 +434,183 @@ dynamically:
   debugger console. (The drivers live in `riscv_semihosting.c`; the
   command-prefix compatibility is documented in `riscv.c`.)
 
+## SEGGER J-Link
+
+A J-Link probe — the most common commercial debugger — can be used in two
+fundamentally different ways, and the one your users pick changes what you
+must ship:
+
+| Path | Who drives the DM | What you configure |
+|---|---|---|
+| **J-Link as a plain USB JTAG adapter** | OpenOCD's `riscv-013` driver — everything above applies unchanged | `adapter driver jlink` in the interface cfg; OpenOCD drives the probe over libusb, no SEGGER software needed |
+| **The SEGGER native stack** — `JLinkExe`, `JLinkGDBServer`, Ozone, J-Flash | SEGGER's built-in RISC-V driver inside the J-Link software (the `JLinkARM` DLL) | a **device name** from SEGGER's device database (or the generic `RV32`/`RV64`), plus a `.JLinkScript` where the part needs help |
+
+The native stack is what a customer "with just a J-Link" gets out of the
+box. It is closed source, but it is not magic: it implements the same
+specification this survey documents, issues the same DMI operations
+([debug-sequences.md](debug-sequences.md)), and its contract is public —
+the facts below are from SEGGER's own support documentation.
+
+### What the native stack supports
+
+- **Spec versions: 0.11, 0.13.2, and ratified 1.0.** One explicit caveat:
+  *pre-ratification* drafts of 1.0 (`1.0.0-STABLE`, `1.0.0-rc1`) are called
+  out by SEGGER as possibly incompatible. Implement plain 0.13.2 or plain
+  1.0, nothing in between (the deltas:
+  [debug-architecture.md](debug-architecture.md)).
+- **RV32 and RV64**, over **JTAG (IEEE 1149.1)** and **cJTAG
+  (IEEE 1149.7)**, plus a third topology the RISC-V spec does not define:
+  **RISC-V behind a CoreSight DAP** — DMI registers memory-mapped behind
+  an AP (SWD/JTAG → SWJ-DP → AHB-/APB-AP → DMI), which hybrid
+  ARM+RISC-V SoCs use so both kinds of core share one debug connector.
+  A plain RV32 part implements none of the extras and doesn't need to.
+- **Run control and breakpoints:** halt/resume/single-step, software
+  breakpoints (`ebreak` patching — and SEGGER's "Unlimited Flash
+  Breakpoints", software breakpoints *in* flash, is supported for
+  RISC-V), hardware breakpoints (`mcontrol`/`mcontrol6`), and data
+  breakpoints in the common match combinations (exact/exact,
+  exact/any, any/exact of address/data — not address or data ranges).
+  Not driven: `itrigger`, `etrigger`, `tmexttrigger`.
+- **One hart at a time.** J-Link debugs a single hart per session (the
+  hart is user-selectable — "user-controlled hart selection" in SEGGER's
+  docs); halt/resume *groups* and multiple DMs are not supported.
+  OpenOCD instead exposes every hart as its own GDB target. For the
+  single-hart RV32 profile of this survey the difference is invisible.
+
+That its discovery is the same shape as OpenOCD's is visible in a real
+connect log (a 0.13 target, from the SEGGER forum — annotated by this
+survey's documents):
+
+```text
+Debug architecture: RISC-V debug: 0.13   ← dmstatus.version = 2 (0.13)
+AddrBits: 7                              ← dtmcs.abits
+DataBits: 32                             ← detected XLEN (RV32 core)
+IdleClks: 1                              ← dtmcs.idle
+Memory access:
+  Via system bus: Yes (32-bit accesses are supported)
+                                         ← sbcs.sbasize / sbaccess32
+  Via ProgBuf: Yes (8 ProgBuf entries)   ← abstractcs.progbufsize
+DataBuf: 2 entries                        ← abstractcs.datacount
+autoexec[0] implemented: Yes             ← abstractauto
+Detected: RV32 core
+CSR access via abs. commands: No         ← probed; progbuf csrr instead
+Temp. halted CPU for NumHWBP detection   ← trigger module probing
+HW instruction/data BPs: 2
+RISC-V identified.
+```
+
+### Where the native driver differs from OpenOCD
+
+**Memory access: same progbuf-first default, no override.** J-Link's
+documented selection logic and OpenOCD's defaults (`riscv.c`:
+progbuf → sysbus → abstract) agree more than they differ:
+
+| Hart state | J-Link picks, in order | OpenOCD default |
+|---|---|---|
+| halted | progbuf (`progbufsize > 0`) → SBA (`sbcs.sbasize > 0`) → Access Memory | progbuf → sysbus → abstract |
+| running | SBA, else nothing | sysbus (SBA), else nothing |
+
+The differences that matter: OpenOCD lets you reorder
+(`riscv set_mem_access sysbus progbuf abstract` — the ESP32 configs do);
+J-Link has no override option (SEGGER documents one as "planned"). And
+J-Link drives SBA through `sbcs` with per-width `sbaccess` values, so the
+`sbaccess8/16/32/…` capability bits are a real interop surface, not
+decoration — report exactly the widths your system bus serves
+(PULP-derived RTL reports only its native width, which is the pattern to
+copy).
+
+Two design consequences either way: **live memory access while the hart
+runs needs SBA** — neither progbuf nor abstract commands work in the
+background — and a DM with *only* Access Memory (the minimal DM of
+[minimal-dm.md](minimal-dm.md)) works, but only while halted.
+
+**The JTAG chain must be self-describing.** J-Link auto-selects which TAP
+to drive: a TAP with `IRlen = 5` and a *known* RISC-V IDCODE wins; else
+a TAP with `IRlen = 4` and a known CoreSight DAP IDCODE
+(RISC-V-behind-DAP assumed); else — if the chain has exactly one TAP
+with `IRlen` 4 or 5 — that one. Since "for RISC-V almost every vendor
+does their own TAPId" (SEGGER's words), anything else needs manual
+selection: `JTAGConf <IRPre>,<DRPre>` in the commander (`-jtagconf` on
+the command line; `IRPre` = sum of the IR lengths of all TAPs closer to
+TDI, `DRPre` = their count — the same numbers an OpenOCD chain
+configuration implies), or a `.JLinkScript` pinning the chain. Practical
+rules: ship the spec's 5-bit IR and a real IDCODE
+([jtag-tap.md](jtag-tap.md)); multi-TAP boards ship a script.
+
+**No generic cache maintenance.** SEGGER explicitly does not drive
+`fence.i`/CMO-style maintenance generically — on officially supported
+devices the device entry carries it, on custom parts you may need a
+script. This bites exactly where software breakpoints on cached code do
+([debug-mode.md](debug-mode.md)): a patched `c.ebreak` the I-cache never
+sees looks precisely like "breakpoint not hit".
+
+### Using the native stack
+
+J-Link Commander is the ad-hoc bring-up tool (the native-stack equivalent
+of OpenOCD's telnet). A spec-conformant part needs no device entry — the
+generic `RV32` name covers it (this is how VexRiscv FPGA builds are
+debugged):
+
+```console
+$ JLinkExe -device RV32 -if JTAG -speed 4000 -jtagconf -1,-1
+J-Link> connect
+J-Link> h                         # halt — parks in Debug Mode
+J-Link> regs                      # register dump (abstract Access Register)
+J-Link> mem32 0x20000000 10       # memory
+J-Link> w4 0x20000000 0x12345678  # memory write
+J-Link> g                         # resume
+```
+
+A production part uses its device name — the database entry encodes IR
+length, register set, flash loader, and init steps, which is what makes
+flash download and Unlimited Flash Breakpoints work without any config
+file of yours:
+
+```console
+$ JLinkGDBServer -device GD32VF103CBT6 -if JTAG -speed 4000 -port 2331
+```
+
+- GDB then connects with `target remote :2331` (J-Link defaults: 2331
+  GDB, 2332 SWO, 2333 telnet — versus OpenOCD's 3333/4444/6666). The
+  register description is served by the GDB server, same contract as
+  OpenOCD's `qXfer:features`.
+- GDB escape hatches are `monitor` commands: RISC-V-specific
+  `monitor ReadCSR` / `monitor WriteCSR` for raw CSR access, plus the
+  generic `monitor regs` / `monitor memU32` / `monitor halt` /
+  `monitor go` / `monitor step` / `monitor reset` / `monitor setbp`.
+- **Custom silicon** has three routes, in increasing officialdom:
+  1. the generic `RV32`/`RV64` device names — enough for
+     spec-conformant single-DM parts;
+  2. a `.JLinkScript` you ship next to the binary — manual chain setup
+     and `ConfigTargetSettings()`-style init (a behind-DAP part *must*
+     map its APs and DMI base here: no ROM table scan exists for
+     RISC-V);
+  3. a real device-database entry, which SEGGER adds on request — the
+     "officially supported device" path, with flash loader, init steps,
+     and cache handling baked in (ESP32-C3-class support, for example,
+     arrived this way in J-Link V8.10).
+- Ozone (SEGGER's standalone source-level debugger) and J-Flash (flash
+  programming) sit on the same device database — one entry serves all
+  of them.
+
+### What to ship for the J-Link ecosystem
+
+Same five deliverables as [the top of this document](#the-deliverables),
+different config mechanism:
+
+| Deliverable | OpenOCD | J-Link native |
+|---|---|---|
+| Target description | your `target/yourchip.cfg` (you write it) | device DB entry (SEGGER adds it on request) or generic `RV32` |
+| Custom init / quirks | `-event` Tcl scripts | `.JLinkScript` |
+| Flash | `flash bank` + loader ([flash-loaders.md](flash-loaders.md)) | flash loader inside the device entry |
+| Chain quirks | `jtag newtap -irlen/-expected-id` | `-jtagconf` / script |
+| Identity (IDCODE, `misa`, …) | identical, see [above](#identity-idcode-jedec-and-the-csr-identity-block) | identical |
+
+The register-level contract underneath is the same either way — which is
+the point of the spec: [minimal-dm.md](minimal-dm.md) and
+[debug-sequences.md](debug-sequences.md) describe what *both* drivers'
+scans compile down to.
+
 ## Bring-up checklist
 
 Order your first silicon bring-up the way the tools probe it; each step
@@ -430,6 +628,7 @@ says what you expect to see and which document explains the failure:
 | 8. Breakpoints | software `break` in RAM; hardware (flash) via triggers; both compressed and uncompressed slots | [debug-mode.md](debug-mode.md), [debug-architecture.md](debug-architecture.md) |
 | 9. Reset | `reset halt` parks at your reset vector, repeatedly; watchdog silent while halted | [debug-sequences.md](debug-sequences.md) |
 | 10. Flash | `program foo.elf` or GDB `load` completes; verify a `load`ed image runs | [flash-loaders.md](flash-loaders.md) |
+| 11. Native J-Link stack, if that is the field tool | `JLinkExe -device RV32` connects; `h`, `regs`, `mem32` behave; flash download with a real device name | [SEGGER J-Link above](#segger-j-link) |
 
 Finally, before shipping the config: reconnect ten times in a row
 (`shutdown` + `init` cycles), across TCK speeds, with and without GDB —

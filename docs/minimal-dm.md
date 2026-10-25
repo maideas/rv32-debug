@@ -25,6 +25,7 @@ those sources.
 - [DTM side requirements](#dtm-side-requirements)
 - [Hart-side hooks the DM needs](#hart-side-hooks-the-dm-needs)
 - [Tool compatibility (OpenOCD)](#tool-compatibility-openocd)
+- [Tool compatibility (SEGGER J-Link)](#tool-compatibility-segger-j-link)
 - [What to add next, in order of usefulness](#what-to-add-next-in-order-of-usefulness)
 
 ## TL;DR
@@ -395,6 +396,24 @@ Verified against `riscv-013.c` / `riscv-013_reg.c` (riscv-openocd,
   abstract` pins it).
 - Optional CSRs are probed by abstract read; not-supported cleanly marks
   them non-existent.
+
+## Tool compatibility (SEGGER J-Link)
+
+The same register set passes SEGGER's native J-Link driver (full contract
+and usage: [toolchain-integration.md](toolchain-integration.md) →
+"SEGGER J-Link"):
+
+- The generic `RV32` device name connects against a spec-conformant
+  single-DM part — no device-database entry needed for register and
+  memory access.
+- `progbufsize = 0` is fine: while halted, J-Link falls back to **Access
+  Memory** (OpenOCD's `riscv set_mem_access abstract` pins the same
+  choice).
+- `sbcs.sbasize = 0` means **no memory access while the hart runs** —
+  neither driver has another background mechanism. Live memory watching
+  from the debugger is the feature SBA buys ("What to add next", #5).
+- Single-hart parts are immune to J-Link's one-hart-at-a-time
+  limitation.
 
 ## What to add next, in order of usefulness
 
