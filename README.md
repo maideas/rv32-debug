@@ -31,6 +31,7 @@ Read roughly in this order; each links to the others.
 | Document | What it covers |
 |---|---|
 | [docs/debug-architecture.md](docs/debug-architecture.md) | The full layered picture: JTAG TAP → DTM → DMI → DM → hart debug logic, every DM register, Debug Mode, debug CSRs, triggers, plus 0.13.2-vs-1.0 differences |
+| [docs/jtag-tap.md](docs/jtag-tap.md) | The IEEE 1149.1 layer under the transport: what the IR holds after TAP reset, the mandatory all-ones BYPASS encoding, the 32-bit IDCODE layout, LSB-first shift direction and bit order, what a Capture-IR scan actually returns — and the 5-bit RISC-V DTM instruction set |
 | [docs/jtag-dtm.md](docs/jtag-dtm.md) | Implementation guide for the transport layer: the 16-state TAP, IR/DR scan registers, `dtmcs`/`dmi` layouts, the sticky busy/failed `op` protocol, timing and `dtmcs.idle`, reset/recovery, the DMI bus with clock-domain crossing |
 | [docs/minimal-dm.md](docs/minimal-dm.md) | The smallest usable DM register set (single-hart RV32): complete bit maps and field tables for `data0`/`data1`/`dmcontrol`/`dmstatus`/`abstractcs`/`command`, required protocol behaviors, coupled bits, and OpenOCD compatibility |
 | [docs/abstract-commands.md](docs/abstract-commands.md) | The DM's high-level command interface: execution protocol and `cmderr` semantics, the three standard commands (Access Register, Quick Access, Access Memory) with full field layouts and hex examples, capability probing, 0.13.2-vs-1.0 differences — and the three sanctioned ways to extend with custom abstract commands |
