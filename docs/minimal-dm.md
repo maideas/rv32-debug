@@ -86,17 +86,6 @@ The debugger's main control knob. Implemented R/W bits must read back
 what was written — OpenOCD discovers `HARTSELLEN` and `hasel` support by
 writing all-ones and reading back.
 
-```
-[31]     haltreq              [5:4]    0
-[30]     resumereq (W1)      [3]      setresethaltreq (W1)
-[29]     hartreset            [2]      clrresethaltreq (W1)
-[28]     ackhavereset (W1)   [1]      ndmreset
-[27]     0                    [0]      dmactive
-[26]     hasel
-[25:16]  hartsello ┐
-[15:6]   hartselhi  ┘= hartsel
-```
-
 | Bits | Field | Access | What it does | Minimal implementation |
 |---|---|---|---|---|
 | 31 | haltreq | W | 1 = request selected harts to halt; 0 = cancel the request | stored flop → hart's halt request input (reads may return the stored value) |
@@ -126,16 +115,6 @@ Concrete write values (single hart):
 
 Read-only status of the DM and the selected harts:
 
-```
-[31:23]  0                    [11:10]  all/anyrunning
-[22]     impebreak            [9:8]    all/anyhalted
-[21:20]  0                    [7]      authenticated
-[19:18]  all/anyhavereset     [6]      authbusy
-[17:16]  all/anyresumeack     [5]      hasresethaltreq
-[15:14]  all/anynonexistent   [4]      confstrptrvalid
-[13:12]  all/anyunavail       [3:0]    version (=2)
-```
-
 | Bits | Field | What it reports | Minimal implementation |
 |---|---|---|---|
 | 22 | impebreak | implicit ebreak after the program buffer | 0 (no progbuf) |
@@ -150,6 +129,8 @@ Read-only status of the DM and the selected harts:
 | 5 | hasresethaltreq | resethaltreq supported | 0 |
 | 4 | confstrptrvalid | confstrptr0–3 hold a valid pointer | 0 |
 | 3:0 | version | spec version of the DM | **2** (= 0.13) |
+
+(Bits 31:23 and 21:20 read 0.)
 
 Single hart: drive each `allX`/`anyX` pair from one signal. Example: a
 halted hart reads as `0x0000_0382` (allhalted | anyhalted | authenticated
@@ -191,12 +172,8 @@ debugger tells optional features apart.
 
 ### abstractcs (0x16) — abstract command status
 
-```
-[31:29]  0                 [12]   busy
-[28:24]  progbufsize (=0)  [11]   0
-[23:13]  0                 [10:8] cmderr (W1C)
-[7:4]    0                 [3:0]  datacount (=2)
-```
+Status of the abstract command engine — the debugger polls `busy` after
+every `command` write and clears sticky errors via `cmderr` (W1C):
 
 | Bits | Field | Access | Meaning |
 |---|---|---|---|
@@ -204,6 +181,8 @@ debugger tells optional features apart.
 | 12 | busy | R | 1 = an abstract command is executing |
 | 10:8 | cmderr | R/W1C | sticky error code of the last command |
 | 3:0 | datacount | R | implemented data registers: **2** (`data0`, `data1`) |
+
+(All other bits read 0.)
 
 `cmderr` codes:
 
