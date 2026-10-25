@@ -708,4 +708,6 @@ expensive operations.
 - Related documents: [minimal-dm.md](minimal-dm.md) (the register set
   these sequences drive),
   [jtag-dtm.md](jtag-dtm.md) (the transport underneath),
-  [debug-architecture.md](debug-architecture.md) (the big picture)
+  [debug-architecture.md](debug-architecture.md) (the big picture),
+  [flash-loaders.md](flash-loaders.md) (the target-run code built from
+  these sequences)

@@ -427,14 +427,17 @@ Verified against `riscv-013.c` / `riscv-013_reg.c` (riscv-openocd,
    them when present.
 4. `resethaltreq` — "reset and halt" (needs core reset-entry support).
 5. SBA (sbcs/sbaddress0/sbdata0) — memory access while running, flash
-   loaders; costs a bus master.
+   loaders; costs a bus master. (SBA only accelerates the data-movement
+   half of flash loading — the execution half is the target-run loader,
+   see [flash-loaders.md](flash-loaders.md).)
 6. `abstractauto` + `aampostincrement` — burst performance: 1 DMI op
    per memory word instead of 4 (`aarpostincrement` would add the same
    for register bursts; see
    [Optional burst extension](#optional-burst-extension) above and the
    burst sequences in [debug-sequences.md](debug-sequences.md)).
 7. Program Buffer — usually *more* work (debug ROM, impebreak, hartinfo
-   shadowing) for little gain over what you already have.
+   shadowing) for little gain over what you already have; what that work is,
+   see [debug-rom.md](debug-rom.md).
 
 **Reference implementations to crib from**: OpenTitan `rv_dm` (essentially
 this exact profile + optional SBA, well-documented), PULP `riscv-dm` (used

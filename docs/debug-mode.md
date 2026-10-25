@@ -201,7 +201,9 @@ instruction. Consequences:
 
 This is a legitimate (and common) realization: the debugger never runs
 ROM code; OpenOCD services everything through abstract commands on this
-register set, as [minimal-dm.md](minimal-dm.md) documents.
+register set, as [minimal-dm.md](minimal-dm.md) documents. The canonical realization this
+replaces — the park loop, progbuf stuffing, `dret` — is unpacked in
+[debug-rom.md](debug-rom.md).
 
 ## ebreak re-routing and software breakpoints
 
@@ -533,6 +535,8 @@ traced through every hop — transport, DM, interface, hart:
 
 | Document | What it covers relative to this one |
 |---|---|
+| [debug-rom.md](debug-rom.md) | The canonical ROM-based realization this document's "minimal DM twist" contrasts with: park loop, debug execution rules, progbuf stuffing, `dret` |
+| [flash-loaders.md](flash-loaders.md) | The other target-side code a debugger injects — flash loaders — which deliberately run *outside* Debug Mode as ordinary resumed code |
 | [minimal-dm.md](minimal-dm.md) | The DM register set this interface serves: bit maps, protocol behaviors, OpenOCD compatibility |
 | [dm-hart-interface.md](dm-hart-interface.md) | The same interface as a standalone signal reference: every line, its meaning and handling rules, handshake timeline, resets |
 | [debug-sequences.md](debug-sequences.md) | The same flows as concrete DMI operation listings (halt, inspect, step, breakpoints, reset, recovery) |

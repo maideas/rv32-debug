@@ -275,8 +275,10 @@ end (`impebreak` in `abstractcs`). The hart never leaves Debug Mode
 during execution; an exception stops the program, keeps the hart
 halted, and sets `cmderr = 3` (exception). A program that never reaches
 its `ebreak` leaves the hart spinning in Debug Mode — the debugger has
-lost control. See [debug-sequences.md](debug-sequences.md) for the
-concrete flows.
+lost control. What the hart is actually doing while it runs that buffer —
+the park loop and debug ROM of the canonical realization — is described in
+[debug-rom.md](debug-rom.md). See [debug-sequences.md](debug-sequences.md)
+for the concrete flows.
 
 ## Capability discovery
 
