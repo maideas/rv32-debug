@@ -343,9 +343,11 @@ answers `cmderr=3`, correctly telling the debugger they don't exist).
 ## The interface between DM and hart
 
 Everything above converges into one flat bundle of wires between the DM
-and the hart. This is the complete interface for the minimal DM of
-[minimal-dm.md](minimal-dm.md) — a handful of request/status lines, three
-data-access ports, and the reset wire:
+and the hart (distilled, signal by signal, into the standalone reference
+[dm-hart-interface.md](dm-hart-interface.md)). This is the complete
+interface for the minimal DM of [minimal-dm.md](minimal-dm.md) — a
+handful of request/status lines, three data-access ports, and the reset
+wire:
 
 ```
 ┌─────────────────────────────────┐              ┌────────────────────────────────┐
@@ -528,6 +530,7 @@ traced through every hop — transport, DM, interface, hart:
 | Document | What it covers relative to this one |
 |---|---|
 | [minimal-dm.md](minimal-dm.md) | The DM register set this interface serves: bit maps, protocol behaviors, OpenOCD compatibility |
+| [dm-hart-interface.md](dm-hart-interface.md) | The same interface as a standalone signal reference: every line, its meaning and handling rules, handshake timeline, resets |
 | [debug-sequences.md](debug-sequences.md) | The same flows as concrete DMI operation listings (halt, inspect, step, breakpoints, reset, recovery) |
 | [debug-architecture.md](debug-architecture.md) | The full layered picture: JTAG TAP → DTM → DMI → DM → hart debug logic, all DM registers, 0.13.2 vs 1.0 |
 | [jtag-dtm.md](jtag-dtm.md) | The transport underneath: TAP FSM, `dtmcs`/`dmi` scan registers, op protocol, timing, CDC |

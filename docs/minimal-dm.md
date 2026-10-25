@@ -384,7 +384,8 @@ DM logic isn't in the TCK domain, set `idle` to cover synchronization.
 
 A detailed description of the CPU side — Debug Mode behavior and this
 interface's signals, handshake timing, and reset interactions — is in
-[debug-mode.md](debug-mode.md). In short:
+[debug-mode.md](debug-mode.md); the signal-by-signal reference is
+[dm-hart-interface.md](dm-hart-interface.md). In short:
 
 - halt request in; `running/halted` + `resumeack` status out
 - read/write port into the GPR file while halted (one r/w port suffices)
