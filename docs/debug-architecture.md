@@ -296,7 +296,9 @@ for the minimal DM is in [debug-mode.md](debug-mode.md).
 
 ### Debug Mode
 
-A special execution state entered on: halt request, trigger with
+A special execution state — orthogonal to the privilege modes (M/S/U),
+not a fourth mode on that axis ([debug-mode.md](debug-mode.md) "What Debug
+Mode is (and is not)") — entered on: halt request, trigger with
 action=debug, `ebreak` (if enabled for the current privilege), single-step
 completion, or resethaltreq out of reset. The spec leaves the
 implementation open; in the common ROM-based design the halted hart

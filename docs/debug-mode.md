@@ -63,6 +63,59 @@ observable behavior to the debugger; see
 [The minimal DM twist](#the-minimal-dm-twist-debug-mode-without-a-debug-rom)
 below.
 
+### Why Debug Mode is not another privilege mode
+
+The word *mode* invites reading Debug Mode as a fourth ring alongside
+M/S/U. Five properties of the design refuse that reading:
+
+1. **The two axes are orthogonal, and `dcsr.prv` exists to bridge them.**
+   A privilege mode describes what the *executing* instruction stream may
+   do; Debug Mode suspends that stream. Entry records which mode was
+   interrupted (`dcsr.prv` ← current mode) and resume restores it — were
+   Debug Mode a mode on the same axis, that field would be meaningless and
+   resume would not need to be told where to go back to. A hart halted out
+   of U-mode resumes into U-mode.
+2. **Entry bypasses the trap architecture — deliberately.**
+   Privilege-mode transitions are trap-mediated (`mepc`/`mcause`/`mtval`,
+   vector through `mtvec`, `mstatus.mpp`, `mret`). Debug Mode entry does
+   none of this, because it must not disturb the very state under
+   inspection: a debugger has to be able to halt a hart that is itself
+   mid-trap — debugging a crash inside an interrupt handler — without
+   touching `mepc`/`mcause`. Hence a separate entry/exit path, with its own
+   CSRs (`dcsr`, `dpc`) and its own return
+   ([`dret`](#leaving-debug-mode-dret-and-hardware-resume)).
+3. **It is driven from outside and cannot be refused.** M/S/U transitions
+   are things running software does. Debug Mode is entered by an external
+   agent — debugger → DTM → DM → `halt_req` — from any privilege mode at
+   any instruction boundary, unmaskable and uninterceptable. That is a
+   design requirement, not an accident: a debugger must control exactly
+   the code that is broken, privileged, or hostile, and a "mode" that
+   running software could refuse to enter would be useless for debugging.
+4. **It grants no execution rights — it stops execution.** A privilege
+   mode governs what *executing* code may access; in Debug Mode no normal
+   instructions retire, no interrupts are taken, and the hart's bus
+   interface is idle. In the minimal realization of this repo, Debug Mode
+   is literally just "fetch suppressed, the DM's debug ports open" — a
+   running/halted bit in the run-control FSM, not an execution context.
+   The spec sentence that *sounds* mode-like — the halted hart executes
+   debug-ROM code at M-privilege — describes the access rights of the
+   ROM's own accesses *inside* Debug Mode, not Debug Mode being a
+   privilege mode itself.
+5. **State is frozen, not switched.** Pending interrupts stay pending and
+   fire after resume; GPRs, memory, and CSRs keep their values; the DM's
+   ports see the plain register file, not an M-mode view of it. A genuine
+   mode switch leaves traces in the trap state — this leaves none, which
+   is why running software can observe it only through lost cycles and,
+   after the fact, the debug CSRs.
+
+The working mental model is therefore two independent coordinates:
+privilege mode (M/S/U — *what executing code may do*) × run state
+(running/halted — *whether normal code executes at all*), the second
+owned by the Debug Module rather than the ISA. "Debug Mode" is the halted
+half of that second axis — which is also why it appears in none of the
+standard `mstatus`/privilege-mode machinery and lives entirely in the
+External Debug Support specification.
+
 ## The hart's debug state machine
 
 Externally (through `dmstatus`, see
