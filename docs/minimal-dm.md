@@ -35,7 +35,7 @@ Six DMI register addresses, everything else hardwired to read 0:
 | DMI addr | Register | What you implement |
 |---|---|---|
 | 0x04, 0x05 | `data0`, `data1` | 2× R/W argument registers (`datacount=2`) |
-| 0x10 | `dmcontrol` | `dmactive`, `haltreq`, `resumereq`, `ndmreset`, 0-bit `hartsel` |
+| 0x10 | `dmcontrol` | `dmactive`, `haltreq`, `resumereq`, `ndmreset`, hart selection fixed to hart 0 (HARTSELLEN=0) |
 | 0x11 | `dmstatus` | running/halted/resumeack/nonexistent bits, `version=2`, `authenticated=1` |
 | 0x16 | `abstractcs` | `busy`, `cmderr` (W1C), `progbufsize=0`, `datacount=2` |
 | 0x17 | `command` | write-only trigger for cmdtype 0 (Access Register) and 2 (Access Memory) |
@@ -77,9 +77,11 @@ above. Notation used below:
   unspecified), **W1** write-1-to-trigger (self-clears), **W1C**
   write-1-to-clear (sticky)
 - "read 0" = hardwire to 0, ignore writes
-- dmstatus reports each condition as an `allX`/`anyX` pair: `allX` is the
-  upper (odd) bit of the pair, `anyX` the lower. On a single-hart system
-  both bits are driven by the same signal.
+- dmstatus reports each hart condition in two separately named fields: an
+  `all`-variant ("true for every selected hart") and an `any`-variant
+  ("true for at least one selected hart"), with the `all`-variant on the
+  higher bit — e.g. `allhalted` (bit 9) above `anyhalted` (bit 8). On a
+  single-hart system both fields of a pair are driven by the same signal.
 
 ### dmcontrol (0x10) — what the debugger writes
 
@@ -92,15 +94,16 @@ writing all-ones and reading back.
 | 31 | haltreq | W | 1 = request selected harts to halt; 0 = cancel the request | stored flop → hart's halt request input (reads may return the stored value) |
 | 30 | resumereq | W1 | 1 = resume selected harts once; clears `resumeack`; ignored while haltreq=1 | one-shot pulse, self-clears |
 | 29 | hartreset | R/W | 1 = hold selected harts in reset, 0 = release; reads 0 if unimplemented | optional — read 0 if absent (the debugger discovers this by writing 1 and reading back 0) |
-| 28 | ackhavereset | W1 | 1 = clear sticky `havereset` of selected harts | only together with the sticky `havereset` status (dmstatus bits 19:18) — the two form a pair (see [Coupled bits](#coupled-bits-and-feature-probing) below) |
+| 28 | ackhavereset | W1 | 1 = clear sticky `havereset` of selected harts | only together with the sticky `havereset` status (dmstatus `allhavereset` and `anyhavereset`) — the two form a pair (see [Coupled bits](#coupled-bits-and-feature-probing) below) |
+| 27 | reserved | R | — | read 0, writes ignored |
 | 26 | hasel | R/W | 1 = additionally select harts via the hawindow mask | read 0 (writes ignored; the debugger probes by writing 1 and reading back 0) |
-| 25:16, 15:6 | hartsel | R/W | index of the hart dmcontrol/abstract commands act on | HARTSELLEN=0: all bits read 0, writes ignored |
+| 25:16 | hartsello | R/W | low 10 bits of hartsel, the DM-internal index of the hart that dmcontrol/abstract commands act on | HARTSELLEN=0: all bits read 0, writes ignored |
+| 15:6 | hartselhi | R/W | high 10 bits of hartsel (the same hart index) | HARTSELLEN=0: all bits read 0, writes ignored |
+| 5:4 | reserved | R | — | read 0, writes ignored |
 | 3 | setresethaltreq | W1 | 1 = selected harts halt when they next leave reset (sticky until cleared) | read 0 — if you implement the feature, this must pair with dmstatus `hasresethaltreq` (bit 5) (see [Coupled bits](#coupled-bits-and-feature-probing) below) |
 | 2 | clrresethaltreq | W1 | 1 = clear that request | read 0 |
 | 1 | ndmreset | R/W | 1 = assert non-debug-module reset: resets everything except DM/DTM | stored flop → system reset wire (needed for "debug from first instruction" + OpenOCD `reset`) |
 | 0 | dmactive | R/W | 0 = DM held in reset: all DM state takes reset values, and **only this bit may be written**; 1 = normal operation | stored flop; gate all DM state with it |
-
-(Bits 27 and 5:4 read 0, writes ignored.)
 
 Concrete write values (single hart):
 
@@ -118,38 +121,45 @@ Read-only status of the DM and the selected harts:
 
 | Bits | Field | What it reports | Minimal implementation |
 |---|---|---|---|
+| 31:23 | reserved | — | read 0 |
 | 22 | impebreak | implicit ebreak after the program buffer | 0 (no progbuf) |
-| 19:18 | all/anyhavereset | selected hart came out of reset, not yet acknowledged | 0, or (implemented together with dmcontrol bit 28): sticky 1 from reset deassertion until `ackhavereset` |
-| 17:16 | all/anyresumeack | hart acknowledged the last resume (needed because a hart can re-halt immediately, so allhalted is no proof of resumption) | **required in practice**: flop set by the hart when it leaves halted, cleared by resumereq |
-| 15:14 | all/anynonexistent | selected hart index doesn't exist | 0 (hart 0 exists — needed for OpenOCD's hart enumeration) |
-| 13:12 | all/anyunavail | selected hart unavailable (in reset, powered down) | 0 (optionally assert during ndmreset) |
-| 11:10 | all/anyrunning | hart executing normally | from hart (= !halted) |
-| 9:8 | all/anyhalted | hart in Debug Mode | from hart |
+| 21:20 | reserved | — | read 0 |
+| 19 | allhavereset | every selected hart came out of reset, not yet acknowledged | 0, or (implemented together with dmcontrol `ackhavereset`): sticky 1 from reset deassertion until `ackhavereset` |
+| 18 | anyhavereset | at least one selected hart came out of reset, not yet acknowledged | same signal as `allhavereset` (single hart) |
+| 17 | allresumeack | every selected hart acknowledged the last resume (needed because a hart can re-halt immediately, so `allhalted` is no proof of resumption) | **required in practice**: flop set by the hart when it leaves halted, cleared by resumereq |
+| 16 | anyresumeack | at least one selected hart acknowledged the last resume | same signal as `allresumeack` (single hart) |
+| 15 | allnonexistent | none of the selected harts exist | 0 (hart 0 exists — needed for OpenOCD's hart enumeration) |
+| 14 | anynonexistent | at least one selected hart doesn't exist | same signal as `allnonexistent` (single hart) |
+| 13 | allunavail | every selected hart unavailable (in reset, powered down) | 0 (optionally assert during ndmreset) |
+| 12 | anyunavail | at least one selected hart unavailable | same signal as `allunavail` (single hart) |
+| 11 | allrunning | every selected hart executing normally | from hart (= !halted) |
+| 10 | anyrunning | at least one selected hart executing normally | same signal as `allrunning` (single hart) |
+| 9 | allhalted | every selected hart in Debug Mode | from hart |
+| 8 | anyhalted | at least one selected hart in Debug Mode | same signal as `allhalted` (single hart) |
 | 7 | authenticated | DM usable without authentication | **tie 1** |
 | 6 | authbusy | authentication in progress | 0 |
 | 5 | hasresethaltreq | resethaltreq supported | 0 |
 | 4 | confstrptrvalid | confstrptr0–3 hold a valid pointer | 0 |
 | 3:0 | version | spec version of the DM | **2** (= 0.13) |
 
-(Bits 31:23 and 21:20 read 0.)
-
-Single hart: drive each `allX`/`anyX` pair from one signal. Example: a
-halted hart reads as `0x0000_0382` (allhalted | anyhalted | authenticated
-| version).
+Single hart: drive each `all`-field and the `any`-field directly below it
+from the same signal. Example: a halted hart reads as `0x0000_0382`
+(`allhalted` | `anyhalted` | `authenticated` | `version`).
 
 ### Coupled bits and feature probing
 
 Two mechanisms in this register set come as pairs that must be implemented
 together — or not at all:
 
-**`havereset` acknowledgement.** dmstatus bits 19:18 are sticky: they read 1
-once the selected hart has come out of reset (whatever the reset cause), and
-the *only* specified way to clear them is dmcontrol bit 28 (`ackhavereset`)
-— the debugger's acknowledgement. Two coherent implementations:
+**`havereset` acknowledgement.** `allhavereset` and `anyhavereset` (dmstatus
+bits 19:18) are sticky: they read 1 once the selected hart has come out of
+reset (whatever the reset cause), and the *only* specified way to clear
+them is dmcontrol `ackhavereset` (bit 28) — the debugger's acknowledgement.
+Two coherent implementations:
 
-1. **Neither** (minimal): bits 19:18 read 0, bit 28 reads 0 and ignores
-   writes. The debugger simply never learns that the hart was reset — fine
-   on a single-hart system.
+1. **Neither** (minimal): `allhavereset` and `anyhavereset` read 0,
+   `ackhavereset` reads 0 and ignores writes. The debugger simply never
+   learns that the hart was reset — fine on a single-hart system.
 2. **Both**: a sticky flop set on reset deassertion and cleared by
    `ackhavereset`. OpenOCD's examine path acknowledges it (writes
    `dmactive | ackhavereset`) whenever it sees the bit set.
@@ -178,12 +188,14 @@ every `command` write and clears sticky errors via `cmderr` (W1C):
 
 | Bits | Field | Access | Meaning |
 |---|---|---|---|
+| 31:29 | reserved | R | read 0 |
 | 28:24 | progbufsize | R | implemented program buffer words: **0** |
+| 23:13 | reserved | R | read 0 |
 | 12 | busy | R | 1 = an abstract command is executing |
+| 11 | reserved | R | read 0 |
 | 10:8 | cmderr | R/W1C | sticky error code of the last command |
+| 7:4 | reserved | R | read 0 |
 | 3:0 | datacount | R | implemented data registers: **2** (`data0`, `data1`) |
-
-(All other bits read 0.)
 
 `cmderr` codes:
 
@@ -213,7 +225,7 @@ shapes, only while the hart is halted.
 | Bits | Field | Accept | Meaning |
 |---|---|---|---|
 | 31:24 | cmdtype | 0 | Access Register |
-| 23 | 0 | 0 | — |
+| 23 | reserved | 0 only | — |
 | 22:20 | aarsize | 2 only | 32-bit access |
 | 19 | aarpostincrement | 0 only | regno is not auto-incremented (stays unsupported even with the burst extension — that concerns `aampostincrement` only) |
 | 18 | postexec | 0 only | nothing to run afterwards (no progbuf) |
@@ -242,10 +254,10 @@ then write `0x0023_100A` (write=1).
 | 23 | aamvirtual | 0 only | physical addresses only |
 | 22:20 | aamsize | 1 or 2 | 16- or 32-bit access (8-bit = 0 optional). 16-bit is required for software breakpoints in compressed code; 3/4 → cmderr=2 |
 | 19 | aampostincrement | 0 (1 = optional) | 0 = debugger re-writes `data1` per word; 1 = DM increments `data1` by the access size after each successful access (see [Optional burst extension](#optional-burst-extension) below) |
-| 18:17 | 0 | 0 | — |
+| 18:17 | reserved | 0 only | — |
 | 16 | write | 0/1 | 0 = load; 1 = store |
 | 15:14 | target-specific | 0 only | — |
-| 13:0 | 0 | 0 | — |
+| 13:0 | reserved | 0 only | — |
 
 Arguments (RV32): address in `data1`, data in `data0` (arg0 = data0,
 arg1 = data1). The DM pushes the load/store through the hart's own LSU,
@@ -284,6 +296,7 @@ sequences are in
 
 ```
 [31:16]  autoexecprogbuf   bit N -> progbufN (no progbuf here: 0)
+[15:12]  reserved          0
 [11:0]   autoexecdata      bit 0 -> data0
 ```
 
@@ -386,8 +399,9 @@ interface's signals, handshake timing, and reset interactions — is in
 Verified against `riscv-013.c` / `riscv-013_reg.c` (riscv-openocd,
 `riscv` branch):
 
-- Discovery works: dmstatus version=2 → OK; all-ones `hartsel` write reads
-  back 0 → 1 hart; `anynonexistent=0` → enumerated.
+- Discovery works: dmstatus version=2 → OK; an all-ones write to
+  `hartsello` and `hartselhi` reads back 0 → 1 hart; `anynonexistent=0` →
+  enumerated.
 - `examine()` reads `hartinfo` (0 fine), `sbcs` (0 fine), `abstractcs`;
   progbufsize=0 only produces a warning about `fence` — then halts, reads
   dcsr/dpc/misa via abstract commands, resumes if it was running.
@@ -420,7 +434,7 @@ and usage: [toolchain-integration.md](toolchain-integration.md) →
 1. **Trigger module** (tselect/tdata1/tdata2/tinfo) — hardware
    breakpoints/watchpoints; needed for debugging ROM/flash.
 2. `haltsum0` (0x40) — one flop, future-proofs multi-hart.
-3. `havereset`/`ackhavereset` sticky bits (see
+3. Sticky `havereset` status plus `ackhavereset` (see
    [Coupled bits](#coupled-bits-and-feature-probing)) — OpenOCD handles
    them when present.
 4. `resethaltreq` — "reset and halt" (needs core reset-entry support).
