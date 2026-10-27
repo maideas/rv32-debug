@@ -333,7 +333,8 @@ on continue. Consequences you must design for:
 
 - Software breakpoints need **writable, executable memory**: they fail on
   code in flash. GDB falls back to hardware breakpoints (RSP `Z1`, using
-  your trigger module, see [debug-architecture.md](debug-architecture.md))
+  your trigger module, see [triggers.md](triggers.md) and
+  [debug-architecture.md](debug-architecture.md))
   when `gdb_breakpoint_override hard` is set, when the breakpoint address
   is inside a `flash bank` region, or when GDB itself decides. GDB
   compresses breakpoints based on the **opcode it reads** —
@@ -342,7 +343,8 @@ on continue. Consequences you must design for:
   off` forces 4-byte breakpoints if your core doesn't support re-routing
   compressed `c.ebreak` (with `dcsr.ebreakm` set, it must — see
   [debug-mode.md](debug-mode.md)).
-- Watchpoints go through the trigger module as well (`Z2`/`Z3`/`Z4`).
+- Watchpoints go through the trigger module as well (`Z2`/`Z3`/`Z4`, see
+  [triggers.md](triggers.md)).
   Your trigger count and match modes (`maskmax`, address/data compare)
   directly determine how many `watch`/`awatch`/`rwatch` GDB can install.
 - If firmware uses triggers itself (industrial fault-tripping on

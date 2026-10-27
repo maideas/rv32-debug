@@ -163,7 +163,7 @@ recorded in `dcsr.cause` so the debugger knows *why* it halted:
 | `dcsr.cause` | Meaning | Exists in the minimal DM? |
 |---|---|---|
 | 1 | `ebreak` executed, re-routed per `dcsr.ebreakm`/`ebreaks`/`ebreaku` | **yes** — this is how software breakpoints work |
-| 2 | trigger (breakpoint/watchpoint) fired with action=1 | no (no trigger module; OpenOCD falls back to ebreak patching) |
+| 2 | trigger (breakpoint/watchpoint) fired with action=1 | no in the minimal profile; with a trigger module ([triggers.md](triggers.md)) it's a hardware breakpoint/watchpoint |
 | 3 | halt request (`dmcontrol.haltreq` → `halt_req` wire) | **yes** — the primary mechanism |
 | 4 | single step completed (`dcsr.step`) | **yes** |
 | 5 | resethaltreq: halted on leaving reset | no (`hasresethaltreq=0`; debugger emulates it by holding `halt_req` across the `ndmreset` pulse) |
@@ -552,8 +552,9 @@ does **not** contain:
   machinery from the hart.
 - **Trigger module** — `tselect`/`tdata*`/`tinfo` don't exist; software
   `ebreak` breakpoints are the only breakpoints. Needed next for
-  ROM/flash debugging (see "What to add next" in
-  [minimal-dm.md](minimal-dm.md)).
+  ROM/flash debugging — the full design is [triggers.md](triggers.md),
+  and it's item #1 in "What to add next" in
+  [minimal-dm.md](minimal-dm.md).
 - **Hart array** — single hart, `hartsel` hardwired 0, no `hawindow`,
   `haltsum*` unused.
 - **`dret` as an executed instruction** — it never runs in this profile.

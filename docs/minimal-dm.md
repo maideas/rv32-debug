@@ -432,7 +432,9 @@ and usage: [toolchain-integration.md](toolchain-integration.md) →
 ## What to add next, in order of usefulness
 
 1. **Trigger module** (tselect/tdata1/tdata2/tinfo) — hardware
-   breakpoints/watchpoints; needed for debugging ROM/flash.
+   breakpoints/watchpoints; needed for debugging ROM/flash — see
+   [triggers.md](triggers.md) for the full design and DMI sequences
+   (the DM side needs no changes).
 2. `haltsum0` (0x40) — one flop, future-proofs multi-hart.
 3. Sticky `havereset` status plus `ackhavereset` (see
    [Coupled bits](#coupled-bits-and-feature-probing)) — OpenOCD handles

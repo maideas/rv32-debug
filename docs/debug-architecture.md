@@ -350,7 +350,8 @@ type, execute/load/store, `action` — action=1 = enter Debug Mode), `tdata2`
 (0x7a2) holds the compare address, `tinfo` (0x7a4) reports supported types.
 These are ordinary CSRs the debugger reaches *through* abstract commands
 while halted. An address-match trigger on execute with action=1 = a hardware
-breakpoint without touching memory.
+breakpoint without touching memory. Full treatment — connections, bit
+layouts, timing semantics, DMI sequences: [triggers.md](triggers.md).
 
 ## 6. Putting it together — a typical debug session
 
