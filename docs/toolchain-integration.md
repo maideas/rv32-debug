@@ -1,6 +1,7 @@
 # Toolchain Integration: Making Your Chip Work with OpenOCD, GDB, and SEGGER J-Link
 
-The other documents in this survey describe what the debugger does *to* you:
+The other documents in this documentation set describe what the debugger
+does *to* you:
 the scans, commands, and register protocols of the debug spec. This one is
 about what you must ship *to* the debugger when you build your own silicon:
 an identity your chip reports correctly, debug logic that survives OpenOCD's
@@ -65,7 +66,7 @@ increasing order of effort:
 | # | Deliverable | Where it comes from | Effort |
 |---|---|---|---|
 | 1 | Correct identity: IDCODE with a JEDEC manufacturer ID you own, accurate `misa`/`mvendorid`/`marchid`/`mimpid` | JEDEC registration, RISC-V International, your RTL | paperwork + a few CSRs |
-| 2 | Self-describing debug logic that survives OpenOCD's discovery (see [below](#discovery-what-openocd-does-at-init)) | the other documents of this survey | already your project |
+| 2 | Self-describing debug logic that survives OpenOCD's discovery (see [below](#discovery-what-openocd-does-at-init)) | the other documents in this documentation set | already your project |
 | 3 | An OpenOCD target/board config (`.cfg`) for your part — plus fixes for whatever it exposes (custom IRs, custom CSRs, broken reset) | you write a Tcl file | days |
 | 4 | Flash support: `flash bank` config (reused or custom driver) + a flash loader | [flash-loaders.md](flash-loaders.md) | days |
 | 5 | A GDB experience: registers under their real names, breakpoints/watchpoints that work everywhere, sane `load`/`reset` | falls out of 1–4 | mostly free |
@@ -178,9 +179,9 @@ All three must be readable; all are MXLEN-bit read-only.
 
 When OpenOCD processes `init` (or a gdb-attach), the `riscv-013` driver runs
 a fixed discovery sequence against your TAP/DTM/DM. This is the
-compatibility contract your debug logic must pass — every step maps to a
-document in this survey. SEGGER's native J-Link driver runs a discovery of
-the same shape; where it differs is covered in
+compatibility contract your debug logic must pass — every step maps to
+a document in this documentation set. SEGGER's native J-Link driver
+runs a discovery of the same shape; where it differs is covered in
 [SEGGER J-Link](#segger-j-link) below.
 
 | # | What OpenOCD does | What your hardware must do | Details in |
@@ -202,8 +203,8 @@ Notes worth knowing because they are *not* in the spec:
   `riscv_scan_increase_delay()` in `riscv-013.c`/`batch.h`; the `riscv
   reset_delays` command exists to reset the learned values). Publishing a
   too-small `idle` therefore still works — just with slow first sessions
-  and busy messages your logs will scare people with. Publishing a correct
-  value keeps scans at full speed from the start.
+  and busy messages that will alarm anyone reading the logs. Publishing a
+  correct value keeps scans at full speed from the start.
 - **Hart enumeration is a linear scan**, not a report: OpenOCD probes
   `hartsel` 0, 1, 2, … until `dmstatus.anynonexistent` reads 1 (up to
   2^20 possible `hartsel` values). A DM that reports a nonexistent hart as
@@ -214,11 +215,12 @@ Notes worth knowing because they are *not* in the spec:
   must reject `aarsize=64` Access Register commands with `cmderr=not
   supported` — if you size-check against a hard-wired 32 and return `ok`,
   OpenOCD concludes RV64 and every later register access corrupts.
-- On success, examine ends with the log line regression suites rely on:
+- On success, examine ends with the log line regression suites grep for:
   `Examined RISC-V core` followed by ` XLEN=32, misa=0x40801105` (your
-  values — the example is RV32IMAC). If you support that ecosystem, don't
-  change the wording of your own tooling — but don't *rely* on OpenOCD's
-  wording either.
+  values — this example, from a rocket-chip RV32, decodes as RV32IMAC
+  plus the `X` bit rocket-chip sets for its RoCC support). If your own
+  tooling parses this line, don't depend on OpenOCD's exact wording —
+  it is not a guaranteed interface.
 
 ### Custom registers and CSRs
 
@@ -449,9 +451,9 @@ must ship:
 
 The native stack is what a customer "with just a J-Link" gets out of the
 box. It is closed source, but it is not magic: it implements the same
-specification this survey documents, issues the same DMI operations
-([debug-sequences.md](debug-sequences.md)), and its contract is public —
-the facts below are from SEGGER's own support documentation.
+specification this documentation set describes, issues the same DMI
+operations ([debug-sequences.md](debug-sequences.md)), and its contract
+is public — the facts below are from SEGGER's own support documentation.
 
 ### What the native stack supports
 
@@ -477,11 +479,12 @@ the facts below are from SEGGER's own support documentation.
   hart is user-selectable — "user-controlled hart selection" in SEGGER's
   docs); halt/resume *groups* and multiple DMs are not supported.
   OpenOCD instead exposes every hart as its own GDB target. For the
-  single-hart RV32 profile of this survey the difference is invisible.
+  single-hart RV32 profile of this documentation set the difference is
+  invisible.
 
 That its discovery is the same shape as OpenOCD's is visible in a real
-connect log (a 0.13 target, from the SEGGER forum — annotated by this
-survey's documents):
+connect log (a 0.13 target, from the SEGGER forum — annotated with the
+DMI registers each line maps to):
 
 ```text
 Debug architecture: RISC-V debug: 0.13   ← dmstatus.version = 2 (0.13)

@@ -587,7 +587,7 @@ bit 2 cleared).
   after the next resume.
 
 **Cost.** 3 ops (arm) + 1 + 2 polls (resume) + 3 ops (disarm) ≈ 9–10
-DMI ops per step; the breakpoint step-past dance above lists ~19 ops
+DMI ops per step; the breakpoint step-past dance below lists ~19 ops
 in total.
 
 ## Software breakpoints

@@ -62,8 +62,8 @@ So Debug Mode is genuinely an *execution state*, not a clock-gated stop:
                    │  (ends in ebreak ──► back)     │         │
                    │                                │         │
                    │            "resume" flag ──────┤         │
-                   │                                 ▼         │
-                   │                             dret         │
+                   │                                ▼         │
+                   │                              dret         │
                    └──────────────────────────────────────────┘
                           dret: pc ← dpc, prv ← dcsr.prv
                           (back to your program, at the

@@ -91,19 +91,19 @@ JTAG TAP → DTM → DMI → DM (run control, abstract commands)
                       │  halt_req / resumereq · halted / running / resumeack
                       │  dbg_csr_* port (abstract Access Register)
                       ▼
-        ┌──────── hart debug logic (RV32 core) ─────────────────┐
+        ┌───────────── hart debug logic (RV32 core) ─────────────┐
         │  Debug Mode entry OR:                                  │
         │    halt_req · ebreakX · step complete                  │
-        │    · trigger fired (action=1) ─────────► enter Debug  │
+        │    · trigger fired (action=1) ─────────► enter Debug   │
         │  dcsr / dpc / dret · single step                       │
         │                                                        │
-        │  ┌──── trigger module ─────────────────────────────┐  │
-        │  │ tselect/tdata1/tdata2/tinfo CSRs                │  │
+        │  ┌───────────────── trigger module ─────────────────┐  │
+        │  │ tselect/tdata1/tdata2/tinfo CSRs                 │  │
         │  │  ├─ comparator #0 ─┐                             │  │
         │  │  ├─ comparator #1  │ watch: pc · LSU addr · data │  │
         │  │  └─ ...           ─┘                             │  │
         │  └──────────────────────────────────────────────────┘  │
-        └──────────────────────────────────────────────────────────┘
+        └────────────────────────────────────────────────────────┘
 ```
 
 Its three ties to the hart:
@@ -374,7 +374,7 @@ The field groups, in detail:
   least-significant bit containing 0 in tdata2", and the top M bits of
   the observed value must equal the top M bits of `tdata2`. Worked
   example — watch a 64-byte-aligned buffer at 0x1000: `tdata2 =
-  0x0000_103E` (low bits `0b11_1110`; least-significant 0 at bit 5, so
+  0x0000_101F` (low bits `0b01_1111`; least-significant 0 at bit 5, so
   M=26 → 2^6-byte granularity). The masked-halves modes are the cheaper
   range match: `match=4` compares the low 16 bits of the value against
   the low 16 bits of `tdata2`, after ANDing the former with the high 16
@@ -427,9 +427,9 @@ matches the data and takes the action):
 
 ```
 tselect 0:  tdata2 = 0x2000_0400
-tdata1   = 0x2880_0842      # type 2 | dmode | chain | m | store (action ignored)
+tdata1   = 0x2800_0842      # type 2 | dmode | chain | m | store (action ignored)
 tselect 1:  tdata2 = 0x0000_DEAD
-tdata1   = 0x2888_1042      # type 2 | dmode | select(data) | action=1 | m | store
+tdata1   = 0x2808_1042      # type 2 | dmode | select(data) | action=1 | m | store
 ```
 
 (Decoded: `chain` is bit 11 = 0x800; `select` is bit 19 = 0x8_0000.
@@ -595,7 +595,7 @@ dmi write data0   <- 0x00001000        # tdata2 <- the address to match
 dmi write command <- 0x0023_07A2
 poll abstractcs until busy==0 && cmderr==0
 
-dmi write data0   <- 0x2880_1044        # tdata1: type=2 | dmode=1
+dmi write data0   <- 0x2800_1044        # tdata1: type=2 | dmode=1
 dmi write command <- 0x0023_07A1        #   | action=1 | m=1 | execute=1
 poll abstractcs until busy==0 && cmderr==0
                                           #   (timing=0 "before", select=0
@@ -606,7 +606,7 @@ poll abstractcs until busy==0 && cmderr==0
 # read back what WARL accepted — mandatory, not optional
 dmi write command <- 0x0022_07A1
 poll abstractcs until busy==0 && cmderr==0
-dmi read  data0   -> 0x2880_1044        # if bits vanished, plan around it
+dmi read  data0   -> 0x2800_1044        # if bits vanished, plan around it
 
 dmi write dmcontrol <- 0x4000_0001      # resume and wait for the fire
 poll dmstatus until allresumeack
@@ -626,7 +626,7 @@ dmi read  data0   -> ... 0x080 ...      # dcsr.cause=2 (trigger)
 
 dmi write command <- 0x0022_07A1        # read tdata1
 poll abstractcs until busy==0 && cmderr==0
-dmi read  data0   -> 0x2890_1044        # hit (bit 20) set: slot 0 fired
+dmi read  data0   -> 0x2810_1044        # hit (bit 20) set: slot 0 fired
 
 dmi write command <- 0x0022_07B1        # read dpc
 poll abstractcs until busy==0 && cmderr==0
@@ -644,9 +644,9 @@ onto the load/store/execute-class bits:
 
 | GDB | `tdata1` bits set (besides type/dmode/action) | `tdata2` |
 |---|---|---|
-| `watch` (write) | `m` + `store` → `0x2880_1042` | watched address |
-| `rwatch` (read) | `m` + `load` → `0x2880_1040` | watched address |
-| `awatch` (access) | `m` + `load` + `store` → `0x2880_1043` | watched address |
+| `watch` (write) | `m` + `store` → `0x2800_1042` | watched address |
+| `rwatch` (read) | `m` + `load` → `0x2800_1040` | watched address |
+| `awatch` (access) | `m` + `load` + `store` → `0x2800_1043` | watched address |
 
 (Add `s`/`u` bits to match in those modes; leave `sizelo=0` "any size" so
 byte/halfword/word writes all match.)
@@ -656,7 +656,7 @@ byte/halfword/word writes all match.)
 The "before" trigger re-fires if simply resumed, so:
 
 ```
-dmi write data0   <- 0x2880_1000        # tdata1: same slot, but m=0 —
+dmi write data0   <- 0x2800_1000        # tdata1: same slot, but m=0 —
 dmi write command <- 0x0023_07A1        # trigger disabled (privilege bits 0)
 poll abstractcs until busy==0 && cmderr==0
 
@@ -672,7 +672,7 @@ dmi write data0   <- (dcsr & ~0x4)      # clear dcsr.step (keep the other
 dmi write command <- 0x0023_07B0
 poll abstractcs until busy==0 && cmderr==0
 
-dmi write data0   <- 0x2880_1044        # tdata1: re-arm the trigger
+dmi write data0   <- 0x2800_1044        # tdata1: re-arm the trigger
 dmi write command <- 0x0023_07A1
 poll abstractcs until busy==0 && cmderr==0
 
@@ -688,7 +688,7 @@ here the trigger is disabled for the step and re-armed after.
 ### Remove a trigger
 
 Write the slot's `tdata1` with all privilege bits (or class bits) zero —
-`0x2880_1000` as above — or write `tdata1=0` (`type=0`) to fully disable
+`0x2800_1000` as above — or write `tdata1=0` (`type=0`) to fully disable
 the slot. Then resume. GDB does exactly this when a breakpoint is deleted.
 
 ## What a minimal RV32 implementation costs

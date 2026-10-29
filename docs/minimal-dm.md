@@ -60,10 +60,11 @@ halt status, halted GPR access, reset control) **plus** at least one of
   officially named **"Minimal RISC-V Debug Specification 0.13.2"** profile.
 
 So the absolute floor is only slightly smaller than the table above:
-option (c) needs abstract access to just the GPRs, dcsr and dpc, but rule
-2 still demands one memory mechanism. Of the three, the cheapest is the
-**Access Memory abstract command** — no progbuf, no debug ROM, no bus
-master. That needs `data1` (address argument), giving the table above.
+option (c) needs abstract access to just the GPRs, dcsr and dpc, but the
+second requirement still demands one memory mechanism. Of the three,
+the cheapest is the **Access Memory abstract command** — no progbuf, no
+debug ROM, no bus master. That needs `data1` (address argument), giving
+the table above.
 
 Bonus: if your Access Register accepts **all implemented CSRs** (not just
 dcsr/dpc), you satisfy (b), and this set makes you *fully* 0.13.2-conformant,

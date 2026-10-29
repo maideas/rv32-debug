@@ -5,10 +5,10 @@ hardware structures that let a debugger (GDB via OpenOCD, SEGGER J-Link,
 or similar) halt, inspect, single-step, and resume a RISC-V hart over JTAG.
 
 The documents describe the debug architecture of the RISC-V External
-Debug Support specification (versions 0.13.2 and ratified 1.0), with all
-register-level details verified against the spec text, production DTM RTL
-(the PULP/OpenTitan debug module used in OpenTitan silicon), and the
-OpenOCD `riscv-013` driver — i.e. what the spec says, what real hardware
+Debug Support specification (versions 0.13.2 and the ratified 1.0), with
+all register-level details verified against the spec text, production
+DTM RTL (the PULP/OpenTitan debug module used in OpenTitan silicon), and
+the OpenOCD `riscv-013` driver — i.e. what the spec says, what real hardware
 implements, and what real debuggers actually do.
 
 ## The layered architecture in one paragraph

@@ -205,7 +205,7 @@ command = (0 << 24)   /* cmdtype  = Access Register */
 
 then read the value from `data0`. Writing `x5` is the same word with
 `(1 << 16)` set: `0x00231005`, with the value pre-written to `data0`.
-Executing only the Program Buffer is `aarsize`/`regno` don't-care:
+Executing only the Program Buffer makes `aarsize`/`regno` don't-care:
 `transfer=0, postexec=1` → `0x00040000` (plus a don't-care `regno`).
 
 ### Quick Access (cmdtype 1)
