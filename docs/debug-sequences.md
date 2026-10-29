@@ -356,7 +356,7 @@ usually a non-issue.
 
 ### Auto-increment bursts (optional DM extension)
 
-Yes — there is an auto-address-increment way, but it needs **two
+There is an auto-address-increment way, but it needs **two
 optional features** that the minimal DM as specified above does *not*
 include (see [minimal-dm.md](minimal-dm.md), "Optional burst
 extension"):
@@ -370,14 +370,60 @@ extension"):
    corresponding `dataN` re-executes the last `command`.
 
 ```
-abstractauto (0x18):
+abstractauto (0x18):   # full field table: minimal-dm.md, "Optional burst extension"
 [31:16]  autoexecprogbuf   (no progbuf here: leave 0)
-[11:0]   autoexecdata      bit 0 -> data0
+[15:12]  reserved          0
+[11:0]   autoexecdata      bit k -> dataN; only bit 0 (data0) is used here
 ```
 
 `aampostincrement` alone removes the per-word `data1` rewrite;
 `abstractauto` additionally removes the per-word `command` rewrite —
 together one DMI op per word.
+
+**Command words.** The burst words are the plain-loop words from the
+table above with bit 19 (`0x0008_0000`) OR'd in — read / write:
+word `0x0228_0000` / `0x0229_0000` (stride +4), halfword
+`0x0218_0000` / `0x0219_0000` (+2), byte `0x0208_0000` /
+`0x0209_0000` (+1). 64/128-bit (`aamsize=3/4`) must still be rejected
+with `cmderr=2` on RV32, with or without bit 19.
+
+**Probing the burst features.** There is no capability bitmap — the
+only sanctioned discovery is attempt-and-read-`cmderr`
+([abstract-commands.md](abstract-commands.md), "Capability
+discovery"). Probe both features once, before the first block
+transfer, with the hart halted (Access Memory requires it):
+
+```
+# 1. aampostincrement. The probe command REALLY executes one access,
+#    so probe with a READ of a harmless address — a write probe would
+#    corrupt it. Any safely-readable address works; dpc is a good
+#    default (it always points at readable code):
+dmi write data1   <- dpc             # scratch address to read
+dmi write command <- 0x0228_0000     # word read, aampostincrement=1
+poll abstractcs until busy==0
+dmi read abstractcs -> v
+cmderr = (v >> 8) & 7
+#   0 -> supported (data1 now holds dpc+4): use bursts
+#   2 -> not supported: use the plain loop, keep bit 19 = 0
+#   3/5 -> the scratch address faulted: pick another, clear, retry
+dmi write abstractcs <- 0x700        # clear cmderr before continuing
+
+# 2. abstractauto. Unimplemented reads 0 and ignores writes, so
+#    detect it by write-and-read-back:
+dmi write abstractauto <- 0x0000_0001
+dmi read abstractauto -> v
+if (v & 1): full bursts (sequences below)
+else:      aampostincrement only (intermediate variant)
+dmi write abstractauto <- 0x0000_0000 # leave autoexec off; each
+                                       # burst enables it itself
+```
+
+A `cmderr=2` answer is not an error — it just means the option is
+absent and every later command/variant must keep the corresponding
+bit clear. The base minimal DM (both features absent) is fully
+conformant. The reference implementation drives exactly this probe
+(`probe_burst_extension()` in [src/sequences.cpp](../src/sequences.cpp),
+using `dpc` as the scratch address).
 
 **Read burst** (`aampostincrement` + `abstractauto`):
 
@@ -430,10 +476,24 @@ read/write `data0`; `data1` is written once. Saves one op per word.
 gates execution: once a word faults (`cmderr=3`/`5` latched), no
 further auto-triggered command starts — the burst just fizzles out,
 and one `abstractcs` poll at the end reveals the failure position
-(`data1` points at the faulting address). Clear with `0x700`-style
-writes and replay from there. (Do keep `count` bounded — the whole
-point of `abstractauto` is that the debugger does *not* check between
-words.)
+(`data1` points at the faulting address). (Do keep `count` bounded —
+the whole point of `abstractauto` is that the debugger does *not*
+check between words.)
+
+**Recovering a fizzle.** When the end-of-burst poll reports
+`cmderr=3/5`:
+
+```
+dmi write abstractauto <- 0x0000_0000  # stop triggering
+dmi read data1 -> fault_addr           # DM points at the faulting
+                                        # word (no increment on failure)
+dmi write abstractcs <- 0x700          # clear cmderr
+# committed progress = (fault_addr - addr) / size words:
+#   write burst -> buf[0 .. n-1] are stored
+#   read burst  -> buf[0 .. n-1] are valid; discard buf[n ..] —
+#                 the fizzled reads just repeat the last good word
+# then re-issue the burst setup with data1 = fault_addr and continue
+```
 
 **Real-world use.** OpenOCD probes `aampostincrement` first (command
 with bit 19, fall back to per-word `data1` writes if it reads back as
@@ -689,6 +749,7 @@ batching):
 | read a GPR/CSR | 3 | command + poll + data0 read |
 | write a GPR/CSR | 3 | data0 + command + poll |
 | read/write a memory word | 4 | data1 + command + poll + data0 |
+| memory word in a burst | 1 | needs `aampostincrement` + `abstractauto`; add ~5–6 setup/teardown ops per block |
 | halt / resume | 1 + poll | ~2–5 ops until acknowledged |
 | breakpoint install | ~8 | read word + patch write (4 + 4) |
 | continue past breakpoint | ~19 | restore (4) + set step (3) + step (3) + re-patch (4) + clear step (3) + resume (2) |

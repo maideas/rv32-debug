@@ -30,7 +30,8 @@ those sources.
 
 ## TL;DR
 
-Six DMI register addresses, everything else hardwired to read 0:
+Six DMI register addresses, everything else hardwired to read 0 —
+plus one optional register if you add the burst extension:
 
 | DMI addr | Register | What you implement |
 |---|---|---|
@@ -39,6 +40,7 @@ Six DMI register addresses, everything else hardwired to read 0:
 | 0x11 | `dmstatus` | running/halted/resumeack/nonexistent bits, `version=2`, `authenticated=1` |
 | 0x16 | `abstractcs` | `busy`, `cmderr` (W1C), `progbufsize=0`, `datacount=2` |
 | 0x17 | `command` | write-only trigger for cmdtype 0 (Access Register) and 2 (Access Memory) |
+| 0x18 | `abstractauto` | *optional* (only with the [burst extension](#optional-burst-extension)): autoexec bits — a `data0` access re-executes the last `command`; absent = reads 0, writes ignored |
 
 **All other DMI addresses read 0, writes ignored** — this is spec-mandated
 ("When read, unimplemented Debug Module DMI Registers return 0. Writing them
@@ -292,19 +294,30 @@ sequences are in
   bytes for aamsize 0/1/2). No increment on failure. Accept `0` always;
   accepting `1` is optional. A debugger discovers this by issuing a
   command with the bit set and checking for `cmderr=2`.
-- **`abstractauto` (DMI 0x18)**, R/W, reset 0:
+- **`abstractauto` (DMI 0x18)**, R/W, reset 0 — bit fields:
 
-```
-[31:16]  autoexecprogbuf   bit N -> progbufN (no progbuf here: 0)
-[15:12]  reserved          0
-[11:0]   autoexecdata      bit 0 -> data0
-```
+| Bits | Field | Access | Meaning |
+|---|---|---|---|
+| 31:16 | autoexecprogbuf | R/W | bit N: any read or write of `progbufN` re-executes the last `command`. No progbuf here: read 0, writes ignored |
+| 15:12 | reserved | R | read 0, writes ignored |
+| 11:2 | autoexecdata[11:2] | R/W | would map to `data2`–`data11`; `datacount=2`, so read 0, writes ignored |
+| 1 | autoexecdata[1] | R/W | bit 1: any access of `data1` re-executes the last `command`. Implementable, but unused by the burst sequences (`data1` carries the address) |
+| 0 | autoexecdata[0] | R/W | bit 0: any read or write of `data0` re-executes the last `command` — the burst bit |
 
-  When a bit is set, any read or write of the corresponding data
-  register re-executes the last `command`. Detectable by writing bits
-  and reading them back. While `autoexecdata` bit 0 is set, each `data0`
-  access both carries a word and triggers the next access — one DMI op
-  per word.
+When a bit is set, any read or write of the corresponding data
+register re-executes the last `command`. Detectable by writing bits
+and reading them back. While `autoexecdata` bit 0 is set, each `data0`
+access both carries a word and triggers the next access — one DMI op
+per word. Three protocol rules complete the picture:
+
+- writing `abstractauto` itself triggers **no** execution — only an
+  access of a mapped `data`/`progbuf` register does;
+- writing it while `busy=1` sets `cmderr=1` — it is in the same
+  busy-protection set as `command`/`abstractcs` and the data
+  registers (see [Required protocol behaviors](#required-protocol-behaviors));
+- if the register is absent altogether it reads 0 and ignores
+  writes (unimplemented = read 0, write ignored, like any other DMI
+  address).
 
 Both together need no other register additions. The base minimal DM
 (both absent) stays conformant: `abstractauto` then reads 0, writes
