@@ -516,6 +516,17 @@ and `allhalted` would mislead you into thinking it never resumed.
 
 ## Single stepping
 
+There is no dedicated "step command" — a step is a normal resume with
+`dcsr.step` armed; the hart's own debug logic re-halts it after
+exactly one instruction (the hart-side view is in
+[debug-mode.md](debug-mode.md), "Single stepping"). Three phases,
+and the hart must already be halted — Access Register answers
+`cmderr=4` otherwise. Every `dcsr` write goes through the
+abstract-command engine, so it costs the usual 3 DMI ops (data0 +
+command + poll).
+
+**Phase 1 — arm: set `dcsr.step` (read-modify-write).**
+
 ```
 dmi write data0 <- (dcsr | 0x4)           # 0x4 = dcsr.step (bit 2); OR it
                                            # into the current dcsr (read
@@ -524,21 +535,60 @@ dmi write data0 <- (dcsr | 0x4)           # 0x4 = dcsr.step (bit 2); OR it
 dmi write command <- 0x0023_07B0         # Access Register, write dcsr
                                            # (regno 0x7B0)
 poll abstractcs until busy==0 && cmderr==0
-
-dmi write dmcontrol <- 0x4000_0001             # resumereq
-poll dmstatus until allresumeack              # it did resume...
-poll dmstatus until allhalted                 # ...and re-halted after ONE instruction
-                                          # dcsr.cause = 4, dpc advanced
 ```
 
-Then clear `step` (write `dcsr & ~0x4`) before the next plain resume,
-or the hart will single-step forever. With `stepie=0`
-(reset default) interrupts are masked during the step — deterministic
-stepping; the pending interrupt is serviced after the next resume.
+Read the *current* `dcsr` first and OR bit 2 in — `cause` and `prv`
+change on every halt, and blindly writing `0x4` would wipe the ebreak
+routing and privilege bits. Setting `step` means: "on the next
+resume, execute exactly one instruction, then re-enter Debug Mode
+with `dcsr.cause = 4`".
 
-`dpc` after the step is the address of the *next* instruction to
-execute (pc + 4 for straight-line code, the branch target for taken
-branches) — not the instruction just executed.
+**Phase 2 — resume, let the hardware do the work.**
+
+```
+dmi write dmcontrol <- 0x4000_0001        # resumereq (bit 30) | dmactive
+poll dmstatus until allresumeack          # it did resume...
+poll dmstatus until allhalted             # ...and re-halted after ONE instruction
+```
+
+`resumereq` is a one-shot. Poll `allresumeack` *then* `allhalted`, in
+that order: `resumeack` proves the hart actually left the halted
+state — a breakpoint at the resume PC (instant re-halt) would
+otherwise be indistinguishable from "never resumed". The
+single-instruction counting happens entirely in hardware; no DMI
+traffic occurs between the two polls.
+
+**Phase 3 — disarm before the next plain resume.**
+
+```
+dmi write data0 <- (dcsr & ~0x4)          # clear step, keep ebreakm etc.
+dmi write command <- 0x0023_07B0          # Access Register, write dcsr
+poll abstractcs until busy==0 && cmderr==0
+```
+
+`step` is **not** self-clearing — leave it set and the hart
+single-steps forever, one instruction per resume. Same
+read-modify-write discipline as phase 1 (the current `dcsr`, with
+bit 2 cleared).
+
+**What you observe after the step.**
+
+- `dcsr.cause = 4` (single step) — read it to confirm *why* the hart
+  halted, vs. 1 (`ebreak`) or 3 (`haltreq`). If the stepped
+  instruction raised an exception, it was taken normally and the
+  hart re-halted at the handler entry: `dpc` = handler address,
+  still `cause=4`.
+- `dpc` holds the address of the *next* instruction to execute —
+  pc + 4 for straight-line code, the branch target for taken
+  branches — **not** the instruction just executed; a debugger
+  computes "current instruction" from the pre-step `dpc`.
+- With `stepie=0` (reset default) interrupts are masked during the
+  step — deterministic stepping; the pending interrupt is serviced
+  after the next resume.
+
+**Cost.** 3 ops (arm) + 1 + 2 polls (resume) + 3 ops (disarm) ≈ 9–10
+DMI ops per step; the breakpoint step-past dance above lists ~19 ops
+in total.
 
 ## Software breakpoints
 

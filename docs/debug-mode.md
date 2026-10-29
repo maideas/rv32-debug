@@ -306,6 +306,11 @@ Single stepping is the *combination* of step and resume:
    after every instruction until the debugger explicitly clears it (it
    must clear it before a normal resume).
 
+The debugger-side DMI sequence for this — the three phases arm /
+resume / disarm, and what to observe after the step (`cause`, `dpc`,
+`stepie`) — is spelled out in [debug-sequences.md](debug-sequences.md),
+"Single stepping".
+
 Details that implementations get wrong:
 
 - "Exactly one instruction" means one **retired** instruction — an
